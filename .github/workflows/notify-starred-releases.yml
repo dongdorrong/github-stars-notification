@@ -10,10 +10,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         
-      - name: Review Action Dependencies
-        uses: actions/dependency-review-action@v3
+      - name: Check Action Vulnerabilities
+        uses: reviewdog/action-detect-action-vulnerabilities@v1
         with:
-          fail-on-severity: moderate
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-check
+          level: error
+          fail_on_error: true
           
   check:
     needs: security-check  # 보안 검사가 통과해야 실행
