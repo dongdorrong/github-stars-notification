@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+import yaml  # 상단에 추가
 
 # 0. 설정 -------------------------------------------------------------------
 CACHE_PATH = Path(".cache/releases.json")   # 이전 릴리즈 캐시
@@ -55,21 +56,71 @@ def format_date(date_str: str) -> str:
     """날짜를 더 읽기 쉬운 형식으로 변환"""
     return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
 
-def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> str:
-    """릴리스 정보를 슬랙 스타일로 포맷팅"""
+def get_project_theme(repo: str) -> tuple[str, str]:
+    """프로젝트별 테마(색상, 이모지) 반환"""
+    # 프로젝트별 고정 테마
+    THEMES = {
+        "kubernetes": ("#326CE5", "☸️"),    # 쿠버네티스 블루
+        "elastic": ("#00BFB3", "🔍"),       # Elastic 티얼
+        "grafana": ("#F46800", "📊"),       # Grafana 오렌지
+        "prometheus": ("#E6522C", "📈"),     # Prometheus 레드
+        "istio": ("#466BB0", "🔀"),         # Istio 블루
+        "terraform": ("#7B42BC", "🏗️"),     # Terraform 퍼플
+        "helm": ("#0F1689", "⎈"),          # Helm 네이비
+        "docker": ("#2496ED", "🐳"),        # Docker 블루
+    }
+    
+    # 기본 테마 (여러 가지 중 하나를 해시값 기반으로 선택)
+    DEFAULT_THEMES = [
+        ("#2EB67D", "📦"),  # 초록색
+        ("#ECB22E", "🔆"),  # 노란색
+        ("#E01E5A", "💫"),  # 빨간색
+        ("#36C5F0", "✨"),  # 하늘색
+    ]
+    
+    org = repo.split('/')[0].lower()
+    if theme := THEMES.get(org):
+        return theme
+        
+    # 저장소 이름을 해시하여 일관된 테마 선택
+    hash_value = sum(ord(c) for c in repo)
+    return DEFAULT_THEMES[hash_value % len(DEFAULT_THEMES)]
+
+def load_config() -> dict:
+    """설정 파일 로드"""
+    config_path = Path("config.yaml")
+    if config_path.exists():
+        return yaml.safe_load(config_path.read_text())
+    return {"special_projects": {}}
+
+def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
+    """릴리스 정보를 슬랙 메시지 블록으로 포맷팅"""
+    # 설정 로드
+    config = load_config()
+    is_special = repo in config["special_projects"]
+    project_config = config["special_projects"].get(repo, {})
+    
+    # 색상과 이모지 결정
+    color, emoji = get_project_theme(repo)
+    
     parts = []
     
     # 1. 저장소 이름
     org, repo_name = repo.split('/')
-    header = f"*{org}* / *{repo_name}*"
+    header = f"{emoji} *{org}* / *{repo_name}*"
+    
+    # 특별 프로젝트인 경우 설명 추가 및 스타일 강조
+    if is_special:
+        header = f"🌟 {header}"  # 특별 프로젝트 표시
+        if description := project_config.get("description"):
+            header += f" - _{description}_"
+    
     parts.append(header)
     
     # 2. 태그 정보와 릴리스 링크
     tag_info = f"<{release_data['html_url']}|`{tag}`>"
     if release_name := release_data.get("name", "").strip():
-        # 태그와 다른 경우에만 릴리스 제목 추가
         if release_name != tag:
-            # 일반적인 접두사 제거
             prefixes = ["Release ", "release ", "version ", "v", "Version "]
             for prefix in prefixes:
                 if release_name.lower().startswith(prefix.lower()):
@@ -81,7 +132,14 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str)
     date_info = format_date(published)
     parts.append(date_info)
     
-    return " ".join(parts)
+    return {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": " ".join(parts)
+        },
+        "color": color
+    }
 
 def main() -> None:
     prev = load_cache()         # {repo: tag_name}
@@ -137,23 +195,14 @@ def main() -> None:
             text_contents.append(header_text)
             
             for nr in new_releases:
-                # 릴리스 정보 가져오기
                 release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
                 if not release_data:
                     continue
 
                 # 메시지 블록 구성
-                message = format_release_info(nr['repo'], release_data, nr['tag'], nr['published'])
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": message
-                    }
-                })
-                
-                # 폴백 텍스트용
-                text_contents.append(message)
+                block = format_release_info(nr['repo'], release_data, nr['tag'], nr['published'])
+                blocks.append(block)
+                text_contents.append(block["text"]["text"])
             
             payload = {
                 "blocks": blocks,

@@ -1,0 +1,7 @@
+# 특별히 관심있는 프로젝트 목록
+# description: 프로젝트에 대한 간단한 설명 (optional)
+
+special_projects:
+  - "kubernetes/kubernetes"
+  - "elastic/elasticsearch"
+  - "grafana/grafana"
