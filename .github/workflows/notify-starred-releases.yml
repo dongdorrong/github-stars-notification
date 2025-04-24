@@ -1,6 +1,6 @@
 name: Notify Starred Releases
 on:
-  schedule: [cron:  '*/30 * * * *']
+  schedule: [cron: '*/30 * * * *']
   workflow_dispatch:
 
 jobs:
@@ -8,14 +8,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: List starred repos
         id: star
         run: |
           gh api /user/starred --paginate \
             | jq -r '.[].full_name' > repos.txt
-        env: { GH_TOKEN: ${{ secrets.GH_PAT }} }
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
-      - name: Detect new releases (Python)
+      - name: Detect new releases
+        id: detect
         run: python .github/scripts/check_release.py
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
@@ -26,5 +29,4 @@ jobs:
         with:
           payload: ${{ steps.detect.outputs.payload }}
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
-
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }} 
