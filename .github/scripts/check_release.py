@@ -94,25 +94,35 @@ def format_description(description: str, limit: int) -> str:
     
     return text
 
-def format_release_title(repo: str, release_data: dict, tag: str, published: str) -> tuple[str, str]:
+def get_short_repo_name(repo: str) -> str:
+    """organization/repo 형식에서 repo 이름만 추출"""
+    return repo.split('/')[-1]
+
+def format_release_title(repo: str, release_data: dict, tag: str, published: str) -> tuple[str, str, str]:
     """릴리스 제목을 포맷팅합니다."""
-    # 기본 제목 (저장소 이름)
-    title = f"*{repo}*"
+    # 저장소 전체 이름과 짧은 이름
+    short_name = get_short_repo_name(repo)
     
-    # 릴리스 이름이 있고 태그와 다른 경우에만 추가
+    # 기본 헤더 (organization/repo)
+    header = f"*{repo}*"
+    
+    # 릴리스 제목
+    title = ""
     release_name = release_data.get("name", "").strip()
     if release_name and release_name != tag:
         # 일반적인 접두사 제거
-        prefixes = ["Release ", "version ", "v", "Version "]
+        prefixes = ["Release ", "release ", "version ", "v", "Version "]
         for prefix in prefixes:
-            if release_name.startswith(prefix):
+            if release_name.lower().startswith(prefix.lower()):
                 release_name = release_name[len(prefix):]
-        title += f": {release_name}"
+        title = release_name.strip()
     
     # 메타 정보
-    meta = f"`{tag}` • {published}"
+    meta = f"`{tag}`"
+    if title:
+        meta = f"{meta} {title}"
     
-    return title, meta
+    return header, meta, published
 
 # 2. 메인 로직 --------------------------------------------------------------
 def main() -> None:
@@ -163,22 +173,32 @@ def main() -> None:
                     continue
 
                 # 제목과 메타 정보 구성
-                title, meta = format_release_title(nr['repo'], release_data, nr['tag'], nr['published'])
+                header, meta, published = format_release_title(nr['repo'], release_data, nr['tag'], nr['published'])
                 
                 # 메시지 블록 구성
-                blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"{title}\n{meta} • <{nr['html_url']}|릴리스 보기>"
-                    }
-                })
-                blocks.append({"type": "divider"})
+                blocks.extend([
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": header
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": f"{meta} • {published} • <{nr['html_url']}|보기>"
+                        }]
+                    },
+                    {"type": "divider"}
+                ])
                 
                 # 폴백 텍스트용
                 text_contents.extend([
-                    title,
-                    f"{meta} • {nr['html_url']}",
+                    header,
+                    f"{meta} • {published}",
+                    f"링크: {nr['html_url']}",
                     "---"
                 ])
             
