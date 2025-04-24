@@ -19,6 +19,12 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 - ⭐ 관심 프로젝트 강조 표시
 - ❗ 버전 변경 감지 및 하이라이트
 
+<div align="center">
+
+![GitHub Stars Notification](images/sample.png)
+
+</div>
+
 ## ⚙️ 설정 방법
 
 ### 1️⃣ GitHub Personal Access Token (PAT) 생성
