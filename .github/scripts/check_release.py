@@ -86,19 +86,27 @@ def get_project_theme(repo: str) -> tuple[str, str]:
     hash_value = sum(ord(c) for c in repo)
     return DEFAULT_THEMES[hash_value % len(DEFAULT_THEMES)]
 
+def normalize_repo_name(repo: str) -> str:
+    """저장소 이름에서 슬래시 주변의 공백을 제거"""
+    return repo.replace(" / ", "/")
+
 def load_config() -> dict:
     """설정 파일 로드"""
     config_path = Path("config.yaml")
     if config_path.exists():
-        return yaml.safe_load(config_path.read_text())
-    return {"special_projects": {}}
+        data = yaml.safe_load(config_path.read_text())
+        # 프로젝트 이름 정규화
+        if "special_projects" in data:
+            data["special_projects"] = [normalize_repo_name(repo) for repo in data["special_projects"]]
+        return data
+    return {"special_projects": []}
 
 def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
     """릴리스 정보를 슬랙 메시지 블록으로 포맷팅"""
     # 설정 로드
     config = load_config()
-    is_special = repo in config["special_projects"]
-    project_config = config["special_projects"].get(repo, {})
+    is_special = normalize_repo_name(repo) in config["special_projects"]
+    project_config = config["special_projects"].get(normalize_repo_name(repo), {})
     
     # 색상과 이모지 결정
     color, emoji = get_project_theme(repo)
@@ -191,8 +199,21 @@ def main() -> None:
                     "text": header_text
                 }
             })
+            
+            # 안내 메시지 추가
+            guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
+                         "• `config.yaml` 파일에 프로젝트를 추가하면 🌟 로 강조 표시됩니다\n"
+                         "• GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으시면 됩니다")
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": guide_text
+                }
+            })
+            
             blocks.append({"type": "divider"})
-            text_contents.append(header_text)
+            text_contents.extend([header_text, guide_text])
             
             for nr in new_releases:
                 release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
