@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-import yaml  # 상단에 추가
+import yaml
 
 # 0. 설정 -------------------------------------------------------------------
 CACHE_PATH = Path(".cache/releases.json")   # 이전 릴리즈 캐시
@@ -31,7 +31,10 @@ if not token:
     sys.exit(1)
 HEADERS["Authorization"] = f"Bearer {token}"
 
-# 1. 유틸 함수 --------------------------------------------------------------
+def normalize_repo_name(repo: str) -> str:
+    """저장소 이름에서 슬래시 주변의 공백을 제거"""
+    return repo.replace(" / ", "/")
+
 def gh_get(url: str) -> dict | None:
     """단일 REST GET, 404(릴리즈 없음) → None 반환"""
     req = urllib.request.Request(url, headers=HEADERS)
@@ -44,51 +47,15 @@ def gh_get(url: str) -> dict | None:
         raise
 
 def load_cache() -> dict:
+    """캐시 파일에서 이전 릴리즈 정보 로드"""
     if CACHE_PATH.exists():
         return json.loads(CACHE_PATH.read_text())
     return {}
 
 def save_cache(data: dict) -> None:
+    """릴리즈 정보를 캐시 파일에 저장"""
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-
-def format_date(date_str: str) -> str:
-    """날짜를 더 읽기 쉬운 형식으로 변환"""
-    return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
-
-def get_project_theme(repo: str) -> tuple[str, str]:
-    """프로젝트별 테마(색상, 이모지) 반환"""
-    # 프로젝트별 고정 테마
-    THEMES = {
-        "kubernetes": ("#326CE5", "☸️"),    # 쿠버네티스 블루
-        "elastic": ("#00BFB3", "🔍"),       # Elastic 티얼
-        "grafana": ("#F46800", "📊"),       # Grafana 오렌지
-        "prometheus": ("#E6522C", "📈"),     # Prometheus 레드
-        "istio": ("#466BB0", "🔀"),         # Istio 블루
-        "terraform": ("#7B42BC", "🏗️"),     # Terraform 퍼플
-        "helm": ("#0F1689", "⎈"),          # Helm 네이비
-        "docker": ("#2496ED", "🐳"),        # Docker 블루
-    }
-    
-    # 기본 테마 (여러 가지 중 하나를 해시값 기반으로 선택)
-    DEFAULT_THEMES = [
-        ("#2EB67D", "📦"),  # 초록색
-        ("#ECB22E", "🔆"),  # 노란색
-        ("#E01E5A", "💫"),  # 빨간색
-        ("#36C5F0", "✨"),  # 하늘색
-    ]
-    
-    org = repo.split('/')[0].lower()
-    if theme := THEMES.get(org):
-        return theme
-        
-    # 저장소 이름을 해시하여 일관된 테마 선택
-    hash_value = sum(ord(c) for c in repo)
-    return DEFAULT_THEMES[hash_value % len(DEFAULT_THEMES)]
-
-def normalize_repo_name(repo: str) -> str:
-    """저장소 이름에서 슬래시 주변의 공백을 제거"""
-    return repo.replace(" / ", "/")
 
 def load_config() -> dict:
     """설정 파일 로드"""
@@ -100,6 +67,10 @@ def load_config() -> dict:
             data["special_projects"] = [normalize_repo_name(repo) for repo in data["special_projects"]]
         return data
     return {"special_projects": []}
+
+def format_date(date_str: str) -> str:
+    """날짜를 더 읽기 쉬운 형식으로 변환"""
+    return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
 
 def format_release_info(repo: str, release_data: dict, tag: str, published: str, prev_tag: str = None) -> dict:
     """릴리스 정보를 슬랙 메시지 블록으로 포맷팅"""
