@@ -18,12 +18,28 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 - 💾 릴리스 정보 캐싱으로 중복 알림 방지
 - ⭐ 관심 프로젝트 강조 표시
 - ❗ 버전 변경 감지 및 하이라이트
+- 🛡️ 자동 보안 취약점 검사
 
 <div align="center">
 
 ![GitHub Stars Notification](images/sample.png)
 
 </div>
+
+## 🔒 보안 취약점 검사
+
+워크플로우는 실행될 때마다 자동으로 GitHub Actions 모듈의 보안 취약점 검사를 수행합니다:
+
+- 🔍 사용되는 모든 GitHub Actions 모듈의 알려진 보안 취약점 검사
+  - actions/checkout@v4
+  - actions/setup-python@v5
+  - slackapi/slack-github-action@v1
+  - 기타 워크플로우에서 사용되는 모든 액션
+- 🚫 중간 수준(moderate) 이상의 취약점이 발견되면 워크플로우가 자동으로 중단됨
+- 🔄 매일 2회 정기적인 보안 검사 수행
+- 🚨 취약점 발견 시 워크플로우 실행 로그에서 상세 정보 확인 가능
+
+이를 통해 항상 안전한 버전의 GitHub Actions 모듈만을 사용하여 워크플로우가 실행됩니다.
 
 ## ⚙️ 설정 방법
 

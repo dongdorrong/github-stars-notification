@@ -4,10 +4,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Review Action Dependencies
+        uses: actions/dependency-review-action@v3
+        with:
+          fail-on-severity: moderate
+          
   check:
+    needs: security-check  # 보안 검사가 통과해야 실행
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r .github/scripts/requirements.txt
       
       - name: List starred repos
         id: star
