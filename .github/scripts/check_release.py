@@ -11,38 +11,43 @@ GITHUB_OUTPUT   : GitHub Actions가 제공하는 출력용 파일 경로
 """
 import json
 import os
-import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 import yaml
+import requests
+from github import Github
+from github.GithubException import GithubException
 
 # 0. 설정 -------------------------------------------------------------------
 CACHE_PATH = Path(".cache/releases.json")   # 이전 릴리즈 캐시
 REPOS_FILE = Path("repos.txt")              # workflow 앞 단계에서 생성
-GH_API     = "https://api.github.com/repos/{repo}/releases/latest"
-HEADERS    = {"User-Agent": "check-release/1.0"}
 
 token = os.getenv("GH_TOKEN")
 if not token:
     print("GH_TOKEN env required", file=sys.stderr)
     sys.exit(1)
-HEADERS["Authorization"] = f"Bearer {token}"
+
+# GitHub API 클라이언트 초기화
+gh = Github(token)
 
 def normalize_repo_name(repo: str) -> str:
     """저장소 이름에서 슬래시 주변의 공백을 제거"""
     return repo.replace(" / ", "/")
 
-def gh_get(url: str) -> dict | None:
-    """단일 REST GET, 404(릴리즈 없음) → None 반환"""
-    req = urllib.request.Request(url, headers=HEADERS)
+def get_latest_release(repo: str) -> dict | None:
+    """저장소의 최신 릴리즈 정보를 가져옴"""
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
+        repository = gh.get_repo(repo)
+        latest_release = repository.get_latest_release()
+        return {
+            "tag_name": latest_release.tag_name,
+            "name": latest_release.title,
+            "published_at": latest_release.published_at.strftime("%Y-%m-%d"),
+            "html_url": latest_release.html_url
+        }
+    except GithubException as e:
+        if e.status == 404:
             return None
         raise
 
@@ -130,8 +135,8 @@ def main() -> None:
         repo = repo.strip()
         if not repo:
             continue
-        url = GH_API.format(repo=repo)
-        data = gh_get(url)
+            
+        data = get_latest_release(repo)
         if not data:
             continue
 
@@ -147,11 +152,11 @@ def main() -> None:
                 "tag": tag,
                 "prev_tag": prev_tag,
                 "name": data.get("name") or "",
-                "published": data["published_at"][:10],
+                "published": data["published_at"],
                 "html_url": data["html_url"],
             })
 
-        time.sleep(0.3)
+        time.sleep(0.3)  # API 레이트 리밋 고려
 
     save_cache(current)
 
@@ -211,14 +216,13 @@ def main() -> None:
             text_contents.extend([header_text, guide_text, "---", " "])
             
             for nr in new_releases:
-                release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
-                if not release_data:
-                    continue
-
                 # 메시지 블록 구성
                 block = format_release_info(
                     nr['repo'], 
-                    release_data, 
+                    {
+                        "html_url": nr["html_url"],
+                        "name": nr["name"]
+                    },
                     nr['tag'], 
                     nr['published'],
                     nr.get('prev_tag')
@@ -242,6 +246,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        # 실패하면 워크플로우를 실패시키기 위해 예외 출력 후 종료 코드 1
         print("ERROR:", exc, file=sys.stderr)
         sys.exit(1)
