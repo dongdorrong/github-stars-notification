@@ -92,18 +92,59 @@ def main() -> None:
         if new_releases:
             # Slack Block Kit 형식으로 메시지 생성
             blocks = []
+            text_contents = []
+            
             for nr in new_releases:
+                # 헤더 섹션 (저장소 이름과 태그)
+                header = f"*{nr['repo']}* tagged `{nr['tag']}`"
                 blocks.append({
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"*{nr['repo']}* - `{nr['tag']}` ({nr['published']})\n<{nr['html_url']}|릴리스 보기>"
+                        "text": header
                     }
                 })
+                
+                # 릴리스 제목과 설명
+                release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
+                if release_data:
+                    body = release_data.get("body", "").strip()
+                    if body:
+                        # 설명이 너무 길면 잘라내기
+                        if len(body) > 2000:
+                            body = body[:2000] + "..."
+                        blocks.append({
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": body
+                            }
+                        })
+                
+                # 릴리스 링크와 날짜
+                footer = f"<{nr['html_url']}|전체 릴리스 노트 보기> • {nr['published']}"
+                blocks.append({
+                    "type": "context",
+                    "elements": [{
+                        "type": "mrkdwn",
+                        "text": footer
+                    }]
+                })
+                
+                # 구분선 추가
+                blocks.append({"type": "divider"})
+                
+                # 폴백 텍스트용
+                text_contents.extend([
+                    header,
+                    body if release_data and release_data.get("body") else "",
+                    footer,
+                    "---"
+                ])
             
             payload = {
                 "blocks": blocks,
-                "text": f"새로운 릴리스가 {len(new_releases)}개 있습니다."  # 폴백 텍스트
+                "text": "\n\n".join(text for text in text_contents if text)  # 빈 문자열 제외하고 결합
             }
             
             f.write(f"has_new=true\n")
