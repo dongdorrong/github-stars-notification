@@ -90,15 +90,25 @@ def main() -> None:
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
         if new_releases:
-            # Slack Block Kit 대신 간단 텍스트 예시
-            lines = [
-                f"*{nr['repo']}* – `{nr['tag']}` ({nr['published']}) <{nr['html_url']}>"
-                for nr in new_releases
-            ]
-            payload = "\\n".join(lines)
+            # Slack Block Kit 형식으로 메시지 생성
+            blocks = []
+            for nr in new_releases:
+                blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*{nr['repo']}* - `{nr['tag']}` ({nr['published']})\n<{nr['html_url']}|릴리스 보기>"
+                    }
+                })
+            
+            payload = {
+                "blocks": blocks,
+                "text": f"새로운 릴리스가 {len(new_releases)}개 있습니다."  # 폴백 텍스트
+            }
+            
             f.write(f"has_new=true\n")
-            # 줄바꿈·따옴표 이스케이프
-            safe = payload.replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
+            # JSON 문자열로 변환하고 이스케이프
+            safe = json.dumps(payload).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             f.write(f"payload={safe}\n")
         else:
             f.write("has_new=false\n")
