@@ -81,4 +81,32 @@ def main() -> None:
             )
 
         # API rate-limit 대비 딜레이 (60req/min 익명, 5k/hr 인증)
-        time.sleep(
+        time.sleep(0.3)
+
+    # 캐시 저장(항상)
+    save_cache(current)
+
+    # GitHub Actions 출력 -----------------------------------------------
+    outputs_file = Path(os.environ["GITHUB_OUTPUT"])
+    with outputs_file.open("a") as f:
+        if new_releases:
+            # Slack Block Kit 대신 간단 텍스트 예시
+            lines = [
+                f"*{nr['repo']}* – `{nr['tag']}` ({nr['published']}) <{nr['html_url']}>"
+                for nr in new_releases
+            ]
+            payload = "\\n".join(lines)
+            f.write(f"has_new=true\n")
+            # 줄바꿈·따옴표 이스케이프
+            safe = payload.replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
+            f.write(f"payload={safe}\n")
+        else:
+            f.write("has_new=false\n")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        # 실패하면 워크플로우를 실패시키기 위해 예외 출력 후 종료 코드 1
+        print("ERROR:", exc, file=sys.stderr)
+        sys.exit(1)
