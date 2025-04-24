@@ -60,21 +60,39 @@ def truncate_text(text: str, max_length: int = 500) -> str:
         return text
     return text[:max_length-3] + "..."
 
-def format_release_body(body: str) -> str:
-    """릴리스 노트 본문을 포맷팅합니다."""
-    if not body:
+def get_description_limit(total_releases: int) -> int:
+    """릴리스 개수에 따라 설명 길이 제한을 계산합니다."""
+    if total_releases <= 3:
+        return 300  # 릴리스가 적으면 더 긴 설명
+    elif total_releases <= 5:
+        return 200  # 중간 길이
+    else:
+        return 100  # 릴리스가 많으면 짧게
+
+def format_description(description: str, limit: int) -> str:
+    """설명을 포맷팅하고 길이를 제한합니다."""
+    if not description:
         return ""
     
-    # 줄바꿈 정리
-    lines = [line.strip() for line in body.split("\n")]
-    lines = [line for line in lines if line]
+    # 줄바꿈을 기준으로 첫 문단 추출
+    paragraphs = [p.strip() for p in description.split('\n')]
+    paragraphs = [p for p in paragraphs if p]
     
-    # 처음 몇 줄만 사용
-    summary = "\n".join(lines[:5])
-    if len(lines) > 5:
-        summary += "\n..."
+    if not paragraphs:
+        return ""
     
-    return truncate_text(summary, 800)
+    text = paragraphs[0]  # 첫 문단만 사용
+    if len(text) > limit:
+        # 마지막 마침표나 줄바꿈 위치 찾기
+        last_period = text[:limit-2].rfind('.')
+        last_newline = text[:limit-2].rfind('\n')
+        cut_point = max(last_period, last_newline)
+        
+        if cut_point > 0:
+            return text[:cut_point + 1] + "..."
+        return text[:limit-3] + "..."
+    
+    return text
 
 # 2. 메인 로직 --------------------------------------------------------------
 def main() -> None:
@@ -118,6 +136,9 @@ def main() -> None:
             blocks = []
             text_contents = []
             
+            # 릴리스 개수에 따른 설명 길이 제한 계산
+            desc_limit = get_description_limit(len(new_releases))
+            
             for nr in new_releases:
                 # 릴리스 정보 가져오기
                 release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
@@ -138,17 +159,16 @@ def main() -> None:
                     }
                 })
 
-                # 두 번째 섹션 - 설명 (있는 경우에만)
+                # 설명 추가 (있는 경우에만)
                 description = release_data.get("body", "").strip()
                 if description:
-                    # 첫 줄만 사용
-                    first_line = description.split('\n')[0].strip()
-                    if first_line:
+                    formatted_desc = format_description(description, desc_limit)
+                    if formatted_desc:
                         blocks.append({
                             "type": "context",
                             "elements": [{
                                 "type": "mrkdwn",
-                                "text": first_line
+                                "text": formatted_desc
                             }]
                         })
 
@@ -158,7 +178,7 @@ def main() -> None:
                 text_contents.extend([
                     title,
                     f"`{nr['tag']}` • {nr['published']}",
-                    first_line if description else "",
+                    formatted_desc if description else "",
                     "---"
                 ])
             
