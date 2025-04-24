@@ -106,7 +106,6 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str)
     # 설정 로드
     config = load_config()
     is_special = normalize_repo_name(repo) in config["special_projects"]
-    project_config = config["special_projects"].get(normalize_repo_name(repo), {})
     
     # 색상과 이모지 결정
     color, emoji = get_project_theme(repo)
@@ -117,11 +116,9 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str)
     org, repo_name = repo.split('/')
     header = f"{emoji} *{org}* / *{repo_name}*"
     
-    # 특별 프로젝트인 경우 설명 추가 및 스타일 강조
+    # 특별 프로젝트인 경우 스타일 강조
     if is_special:
         header = f"🌟 {header}"  # 특별 프로젝트 표시
-        if description := project_config.get("description"):
-            header += f" - _{description}_"
     
     parts.append(header)
     
