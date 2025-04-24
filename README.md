@@ -16,8 +16,7 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 - ⏰ 하루 2회 (오전 9시, 오후 6시) 자동 체크
 - 💬 Slack을 통한 새로운 릴리스 알림
 - 💾 릴리스 정보 캐싱으로 중복 알림 방지
-- 🎨 프로젝트별 자동 테마 적용
-- ⭐ 관심 프로젝트 하이라이팅
+- ⭐ 관심 프로젝트 강조 표시
 
 ## ⚙️ 설정 방법
 
@@ -36,29 +35,31 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 ### 3️⃣ 관심 프로젝트 설정 (선택사항)
 특별히 관심있는 프로젝트는 `config.yaml` 파일에 추가할 수 있습니다:
 ```yaml
+# 특별히 관심있는 프로젝트 목록
 special_projects:
-  - "kubernetes/kubernetes"
-  - "elastic/elasticsearch"
-  - "grafana/grafana"
+  - "kubernetes / kubernetes"
+  - "elastic / elasticsearch"
+  - "grafana / grafana"
 ```
-관심 프로젝트로 등록된 저장소의 릴리스는 🌟 이모지와 함께 강조되어 표시됩니다.
+GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으면 됩니다. (슬래시 주변 공백은 자동으로 처리됩니다)
 
-## 📬 알림 스타일
+## 📬 알림 형식
 
-릴리스 알림은 프로젝트별로 다른 스타일이 자동으로 적용됩니다:
+새로운 릴리스가 감지되면 다음 정보가 Slack으로 전송됩니다:
 
-### 주요 프로젝트 테마
-| 프로젝트 | 색상 | 이모지 | 예시 |
-|---------|------|--------|------|
-| Kubernetes | 파란색 | ☸️ | ☸️ kubernetes/kubernetes |
-| Elastic | 티얼 | 🔍 | 🔍 elastic/elasticsearch |
-| Grafana | 주황색 | 📊 | 📊 grafana/grafana |
-| Prometheus | 빨간색 | 📈 | 📈 prometheus/prometheus |
-| 기타 | 자동 할당 | 자동 할당 | ✨ owner/repository |
+```
+[일반 프로젝트]
+organization / repository v1.2.3 - Release Name 25.04.16
 
-- 주요 오픈소스 프로젝트는 해당 프로젝트의 브랜드 색상과 관련 이모지가 적용됩니다
-- 그 외 프로젝트는 저장소 이름을 기반으로 일관된 테마가 자동으로 할당됩니다
-- `config.yaml`에 등록된 관심 프로젝트는 🌟 이모지가 추가로 표시됩니다
+[관심 프로젝트]
+⭐ organization / repository v1.2.3 - Release Name 25.04.16
+```
+
+- 저장소 이름
+- 릴리스 태그 (클릭 가능한 링크)
+- 릴리스 이름 (태그와 다른 경우)
+- 발행 날짜 (YY.MM.DD)
+- 관심 프로젝트는 ⭐로 강조 표시
 
 ## 🚀 수동 실행
 

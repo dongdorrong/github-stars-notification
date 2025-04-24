@@ -107,18 +107,15 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str)
     config = load_config()
     is_special = normalize_repo_name(repo) in config["special_projects"]
     
-    # 색상과 이모지 결정
-    color, emoji = get_project_theme(repo)
-    
     parts = []
     
     # 1. 저장소 이름
     org, repo_name = repo.split('/')
-    header = f"{emoji} *{org}* / *{repo_name}*"
+    header = f"*{org}* / *{repo_name}*"
     
     # 특별 프로젝트인 경우 스타일 강조
     if is_special:
-        header = f"🌟 {header}"  # 특별 프로젝트 표시
+        header = f"⭐ {header}"
     
     parts.append(header)
     
@@ -142,12 +139,11 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str)
         "text": {
             "type": "mrkdwn",
             "text": " ".join(parts)
-        },
-        "color": color
+        }
     }
 
 def main() -> None:
-    prev = load_cache()         # {repo: tag_name}
+    prev = load_cache()
     current: dict[str, str] = {}
     new_releases: list[dict] = []
 
@@ -180,7 +176,7 @@ def main() -> None:
     # 캐시 저장(항상)
     save_cache(current)
 
-    # GitHub Actions 출력 -----------------------------------------------
+    # GitHub Actions 출력
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
         if new_releases:
@@ -199,7 +195,7 @@ def main() -> None:
             
             # 안내 메시지 추가
             guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
-                         "• `config.yaml` 파일에 프로젝트를 추가하면 🌟 로 강조 표시됩니다\n"
+                         "• `config.yaml` 파일에 프로젝트를 추가하면 ⭐ 로 강조 표시됩니다\n"
                          "• GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으시면 됩니다")
             blocks.append({
                 "type": "section",
@@ -209,8 +205,17 @@ def main() -> None:
                 }
             })
             
+            # 여백 추가
             blocks.append({"type": "divider"})
-            text_contents.extend([header_text, guide_text])
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": " "  # 빈 줄 추가
+                }
+            })
+            
+            text_contents.extend([header_text, guide_text, "---", " "])
             
             for nr in new_releases:
                 release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
