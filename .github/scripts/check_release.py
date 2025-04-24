@@ -94,6 +94,26 @@ def format_description(description: str, limit: int) -> str:
     
     return text
 
+def format_release_title(repo: str, release_data: dict, tag: str, published: str) -> tuple[str, str]:
+    """릴리스 제목을 포맷팅합니다."""
+    # 기본 제목 (저장소 이름)
+    title = f"*{repo}*"
+    
+    # 릴리스 이름이 있고 태그와 다른 경우에만 추가
+    release_name = release_data.get("name", "").strip()
+    if release_name and release_name != tag:
+        # 일반적인 접두사 제거
+        prefixes = ["Release ", "version ", "v", "Version "]
+        for prefix in prefixes:
+            if release_name.startswith(prefix):
+                release_name = release_name[len(prefix):]
+        title += f": {release_name}"
+    
+    # 메타 정보
+    meta = f"`{tag}` • {published}"
+    
+    return title, meta
+
 # 2. 메인 로직 --------------------------------------------------------------
 def main() -> None:
     prev = load_cache()         # {repo: tag_name}
@@ -136,49 +156,29 @@ def main() -> None:
             blocks = []
             text_contents = []
             
-            # 릴리스 개수에 따른 설명 길이 제한 계산
-            desc_limit = get_description_limit(len(new_releases))
-            
             for nr in new_releases:
                 # 릴리스 정보 가져오기
                 release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
                 if not release_data:
                     continue
 
-                # 제목 구성 (저장소명과 릴리스 이름)
-                title = f"*{nr['repo']}*"
-                if release_data.get("name"):
-                    title += f": {release_data['name']}"
+                # 제목과 메타 정보 구성
+                title, meta = format_release_title(nr['repo'], release_data, nr['tag'], nr['published'])
                 
-                # 첫 번째 섹션 - 제목과 태그
+                # 메시지 블록 구성
                 blocks.append({
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"{title}\n`{nr['tag']}` • {nr['published']} • <{nr['html_url']}|릴리스 보기>"
+                        "text": f"{title}\n{meta} • <{nr['html_url']}|릴리스 보기>"
                     }
                 })
-
-                # 설명 추가 (있는 경우에만)
-                description = release_data.get("body", "").strip()
-                if description:
-                    formatted_desc = format_description(description, desc_limit)
-                    if formatted_desc:
-                        blocks.append({
-                            "type": "context",
-                            "elements": [{
-                                "type": "mrkdwn",
-                                "text": formatted_desc
-                            }]
-                        })
-
                 blocks.append({"type": "divider"})
                 
                 # 폴백 텍스트용
                 text_contents.extend([
                     title,
-                    f"`{nr['tag']}` • {nr['published']}",
-                    formatted_desc if description else "",
+                    f"{meta} • {nr['html_url']}",
                     "---"
                 ])
             
