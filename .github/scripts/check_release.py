@@ -51,6 +51,31 @@ def save_cache(data: dict) -> None:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
+def truncate_text(text: str, max_length: int = 500) -> str:
+    """텍스트를 지정된 길이로 제한하고 필요한 경우 말줄임표를 추가합니다."""
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= max_length:
+        return text
+    return text[:max_length-3] + "..."
+
+def format_release_body(body: str) -> str:
+    """릴리스 노트 본문을 포맷팅합니다."""
+    if not body:
+        return ""
+    
+    # 줄바꿈 정리
+    lines = [line.strip() for line in body.split("\n")]
+    lines = [line for line in lines if line]
+    
+    # 처음 몇 줄만 사용
+    summary = "\n".join(lines[:5])
+    if len(lines) > 5:
+        summary += "\n..."
+    
+    return truncate_text(summary, 800)
+
 # 2. 메인 로직 --------------------------------------------------------------
 def main() -> None:
     prev = load_cache()         # {repo: tag_name}
@@ -90,65 +115,63 @@ def main() -> None:
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
         if new_releases:
-            # Slack Block Kit 형식으로 메시지 생성
             blocks = []
             text_contents = []
             
             for nr in new_releases:
-                # 헤더 섹션 (저장소 이름과 태그)
-                header = f"*{nr['repo']}* tagged `{nr['tag']}`"
+                # 릴리스 정보 가져오기
+                release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
+                if not release_data:
+                    continue
+
+                # 제목 구성 (저장소명과 릴리스 이름)
+                title = f"*{nr['repo']}*"
+                if release_data.get("name"):
+                    title += f": {release_data['name']}"
+                
+                # 첫 번째 섹션 - 제목과 태그
                 blocks.append({
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": header
+                        "text": f"{title}\n`{nr['tag']}` • {nr['published']} • <{nr['html_url']}|릴리스 보기>"
                     }
                 })
-                
-                # 릴리스 제목과 설명
-                release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
-                if release_data:
-                    body = release_data.get("body", "").strip()
-                    if body:
-                        # 설명이 너무 길면 잘라내기
-                        if len(body) > 2000:
-                            body = body[:2000] + "..."
+
+                # 두 번째 섹션 - 설명 (있는 경우에만)
+                description = release_data.get("body", "").strip()
+                if description:
+                    # 첫 줄만 사용
+                    first_line = description.split('\n')[0].strip()
+                    if first_line:
                         blocks.append({
-                            "type": "section",
-                            "text": {
+                            "type": "context",
+                            "elements": [{
                                 "type": "mrkdwn",
-                                "text": body
-                            }
+                                "text": first_line
+                            }]
                         })
-                
-                # 릴리스 링크와 날짜
-                footer = f"<{nr['html_url']}|전체 릴리스 노트 보기> • {nr['published']}"
-                blocks.append({
-                    "type": "context",
-                    "elements": [{
-                        "type": "mrkdwn",
-                        "text": footer
-                    }]
-                })
-                
-                # 구분선 추가
+
                 blocks.append({"type": "divider"})
                 
                 # 폴백 텍스트용
                 text_contents.extend([
-                    header,
-                    body if release_data and release_data.get("body") else "",
-                    footer,
+                    title,
+                    f"`{nr['tag']}` • {nr['published']}",
+                    first_line if description else "",
                     "---"
                 ])
             
+            # 마지막 구분선 제거
+            if blocks:
+                blocks.pop()
+            
             payload = {
                 "blocks": blocks,
-                "text": "\n\n".join(text for text in text_contents if text)  # 빈 문자열 제외하고 결합
+                "text": "\n".join(text for text in text_contents if text)
             }
             
             f.write(f"has_new=true\n")
-            # JSON 문자열로 변환하고 이스케이프
             safe = json.dumps(payload).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             f.write(f"payload={safe}\n")
         else:
