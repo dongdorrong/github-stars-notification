@@ -2,6 +2,11 @@
 # description: 프로젝트에 대한 간단한 설명 (optional)
 
 special_projects:
-  - "kubernetes/kubernetes"
-  - "elastic/elasticsearch"
+  - "kubernetes / kubernetes"
   - "grafana/grafana"
+  - "argoproj / argo-cd"
+  - "kubernetes-sigs / karpenter"
+  - "kubernetes-sigs / aws-load-balancer-controller"
+  - "aws / amazon-vpc-cni-k8s"
+  - "etcd-io / etcd"
+  - "istio / istio"
