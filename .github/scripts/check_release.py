@@ -101,7 +101,7 @@ def load_config() -> dict:
         return data
     return {"special_projects": []}
 
-def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
+def format_release_info(repo: str, release_data: dict, tag: str, published: str, prev_tag: str = None) -> dict:
     """릴리스 정보를 슬랙 메시지 블록으로 포맷팅"""
     # 설정 로드
     config = load_config()
@@ -117,17 +117,24 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str)
     if is_special:
         header = f"⭐ {header}"
     
+    # 버전 변경이 있는 경우 빨간 느낌표 추가
+    if prev_tag:
+        header = f"❗ {header}"
+    
     parts.append(header)
     
     # 2. 태그 정보와 릴리스 링크
     tag_info = f"<{release_data['html_url']}|`{tag}`>"
+    if prev_tag:
+        tag_info = f"<{release_data['html_url']}|`{prev_tag} → {tag}`>"
+        
     if release_name := release_data.get("name", "").strip():
         if release_name != tag:
             prefixes = ["Release ", "release ", "version ", "v", "Version "]
             for prefix in prefixes:
                 if release_name.lower().startswith(prefix.lower()):
                     release_name = release_name[len(prefix):]
-            tag_info = f"<{release_data['html_url']}|`{tag}`> - _{release_name.strip()}_"
+            tag_info += f" - _{release_name.strip()}_"
     parts.append(tag_info)
     
     # 3. 날짜 정보
@@ -146,6 +153,7 @@ def main() -> None:
     prev = load_cache()
     current: dict[str, str] = {}
     new_releases: list[dict] = []
+    has_version_changes = False
 
     for repo in REPOS_FILE.read_text().splitlines():
         repo = repo.strip()
@@ -153,27 +161,27 @@ def main() -> None:
             continue
         url = GH_API.format(repo=repo)
         data = gh_get(url)
-        if not data:            # 릴리즈가 없는 저장소
+        if not data:
             continue
 
         tag = data["tag_name"]
         current[repo] = tag
 
-        if prev.get(repo) != tag:
-            new_releases.append(
-                {
-                    "repo": repo,
-                    "tag": tag,
-                    "name": data.get("name") or "",
-                    "published": data["published_at"][:10],
-                    "html_url": data["html_url"],
-                }
-            )
+        prev_tag = prev.get(repo)
+        if prev_tag != tag:
+            if prev_tag:  # 이전 버전이 있는 경우에만 버전 변경으로 간주
+                has_version_changes = True
+            new_releases.append({
+                "repo": repo,
+                "tag": tag,
+                "prev_tag": prev_tag,
+                "name": data.get("name") or "",
+                "published": data["published_at"][:10],
+                "html_url": data["html_url"],
+            })
 
-        # API rate-limit 대비 딜레이 (60req/min 익명, 5k/hr 인증)
         time.sleep(0.3)
 
-    # 캐시 저장(항상)
     save_cache(current)
 
     # GitHub Actions 출력
@@ -181,6 +189,7 @@ def main() -> None:
     with outputs_file.open("a") as f:
         if new_releases:
             blocks = []
+            attachments = []
             text_contents = []
             
             # 헤더 추가
@@ -192,6 +201,19 @@ def main() -> None:
                     "text": header_text
                 }
             })
+            
+            # 버전 변경 경고 (빨간색)
+            if has_version_changes:
+                attachments.append({
+                    "color": "#FF0000",
+                    "blocks": [{
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "❗ *버전 변경이 포함된 릴리스가 있습니다. 반드시 확인해주세요!*"
+                        }
+                    }]
+                })
             
             # 안내 메시지 추가
             guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
@@ -223,12 +245,19 @@ def main() -> None:
                     continue
 
                 # 메시지 블록 구성
-                block = format_release_info(nr['repo'], release_data, nr['tag'], nr['published'])
+                block = format_release_info(
+                    nr['repo'], 
+                    release_data, 
+                    nr['tag'], 
+                    nr['published'],
+                    nr.get('prev_tag')
+                )
                 blocks.append(block)
                 text_contents.append(block["text"]["text"])
             
             payload = {
                 "blocks": blocks,
+                "attachments": attachments,
                 "text": "\n".join(text_contents)
             }
             
