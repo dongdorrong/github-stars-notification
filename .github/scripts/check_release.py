@@ -51,86 +51,38 @@ def save_cache(data: dict) -> None:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
-def truncate_text(text: str, max_length: int = 500) -> str:
-    """텍스트를 지정된 길이로 제한하고 필요한 경우 말줄임표를 추가합니다."""
-    if not text:
-        return ""
-    text = text.strip()
-    if len(text) <= max_length:
-        return text
-    return text[:max_length-3] + "..."
-
-def get_description_limit(total_releases: int) -> int:
-    """릴리스 개수에 따라 설명 길이 제한을 계산합니다."""
-    if total_releases <= 3:
-        return 300  # 릴리스가 적으면 더 긴 설명
-    elif total_releases <= 5:
-        return 200  # 중간 길이
-    else:
-        return 100  # 릴리스가 많으면 짧게
-
-def format_description(description: str, limit: int) -> str:
-    """설명을 포맷팅하고 길이를 제한합니다."""
-    if not description:
-        return ""
-    
-    # 줄바꿈을 기준으로 첫 문단 추출
-    paragraphs = [p.strip() for p in description.split('\n')]
-    paragraphs = [p for p in paragraphs if p]
-    
-    if not paragraphs:
-        return ""
-    
-    text = paragraphs[0]  # 첫 문단만 사용
-    if len(text) > limit:
-        # 마지막 마침표나 줄바꿈 위치 찾기
-        last_period = text[:limit-2].rfind('.')
-        last_newline = text[:limit-2].rfind('\n')
-        cut_point = max(last_period, last_newline)
-        
-        if cut_point > 0:
-            return text[:cut_point + 1] + "..."
-        return text[:limit-3] + "..."
-    
-    return text
-
-def get_short_repo_name(repo: str) -> str:
-    """organization/repo 형식에서 repo 이름만 추출"""
-    return repo.split('/')[-1]
-
 def format_date(date_str: str) -> str:
     """날짜를 더 읽기 쉬운 형식으로 변환"""
-    return date_str.replace('-', '. ')[2:]  # '2025-04-16' -> '25. 04. 16'
+    return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
 
-def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
-    """릴리스 정보를 디스코드 스타일로 포맷팅"""
-    # 저장소 이름과 태그
-    repo_line = f"**{repo}** `{tag}`"
+def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> str:
+    """릴리스 정보를 슬랙 스타일로 포맷팅"""
+    parts = []
     
-    # 릴리스 제목 (있는 경우)
-    title = ""
+    # 1. 저장소 이름
+    org, repo_name = repo.split('/')
+    header = f"*{org}* / *{repo_name}*"
+    parts.append(header)
+    
+    # 2. 태그 정보와 릴리스 링크
+    tag_info = f"<{release_data['html_url']}|`{tag}`>"
     if release_name := release_data.get("name", "").strip():
-        # 태그와 같은 경우 제외
+        # 태그와 다른 경우에만 릴리스 제목 추가
         if release_name != tag:
             # 일반적인 접두사 제거
             prefixes = ["Release ", "release ", "version ", "v", "Version "]
             for prefix in prefixes:
                 if release_name.lower().startswith(prefix.lower()):
                     release_name = release_name[len(prefix):]
-            title = f"\n> {release_name.strip()}"
+            tag_info = f"<{release_data['html_url']}|`{tag}`> - _{release_name.strip()}_"
+    parts.append(tag_info)
     
-    # 날짜와 링크
-    meta = f"릴리스: {format_date(published)}"
-    link = f"<{release_data['html_url']}>"
+    # 3. 날짜 정보
+    date_info = format_date(published)
+    parts.append(date_info)
     
-    return {
-        "repo_line": repo_line,
-        "title": title,
-        "meta": meta,
-        "link": link
-    }
+    return " ".join(parts)
 
-# 2. 메인 로직 --------------------------------------------------------------
 def main() -> None:
     prev = load_cache()         # {repo: tag_name}
     current: dict[str, str] = {}
@@ -172,40 +124,40 @@ def main() -> None:
             blocks = []
             text_contents = []
             
+            # 헤더 추가
+            header_text = "🚀 *새로운 릴리스를 확인했습니다*"
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": header_text
+                }
+            })
+            blocks.append({"type": "divider"})
+            text_contents.append(header_text)
+            
             for nr in new_releases:
                 # 릴리스 정보 가져오기
                 release_data = gh_get(f"https://api.github.com/repos/{nr['repo']}/releases/tags/{nr['tag']}")
                 if not release_data:
                     continue
 
-                # 릴리스 정보 포맷팅
-                info = format_release_info(nr['repo'], release_data, nr['tag'], nr['published'])
-                
                 # 메시지 블록 구성
-                message = [info['repo_line']]
-                if info['title']:
-                    message.append(info['title'])
-                message.extend([info['meta'], info['link']])
-                
+                message = format_release_info(nr['repo'], release_data, nr['tag'], nr['published'])
                 blocks.append({
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "\n".join(message)
+                        "text": message
                     }
                 })
-                blocks.append({"type": "divider"})
                 
                 # 폴백 텍스트용
-                text_contents.extend(message + ["---"])
-            
-            # 마지막 구분선 제거
-            if blocks:
-                blocks.pop()
+                text_contents.append(message)
             
             payload = {
                 "blocks": blocks,
-                "text": "\n".join(text for text in text_contents if text)
+                "text": "\n".join(text_contents)
             }
             
             f.write(f"has_new=true\n")
