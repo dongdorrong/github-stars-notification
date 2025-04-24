@@ -98,31 +98,37 @@ def get_short_repo_name(repo: str) -> str:
     """organization/repo 형식에서 repo 이름만 추출"""
     return repo.split('/')[-1]
 
-def format_release_title(repo: str, release_data: dict, tag: str, published: str) -> tuple[str, str, str]:
-    """릴리스 제목을 포맷팅합니다."""
-    # 저장소 전체 이름과 짧은 이름
-    short_name = get_short_repo_name(repo)
+def format_date(date_str: str) -> str:
+    """날짜를 더 읽기 쉬운 형식으로 변환"""
+    return date_str.replace('-', '. ')[2:]  # '2025-04-16' -> '25. 04. 16'
+
+def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
+    """릴리스 정보를 디스코드 스타일로 포맷팅"""
+    # 저장소 이름과 태그
+    repo_line = f"**{repo}** `{tag}`"
     
-    # 기본 헤더 (organization/repo)
-    header = f"*{repo}*"
-    
-    # 릴리스 제목
+    # 릴리스 제목 (있는 경우)
     title = ""
-    release_name = release_data.get("name", "").strip()
-    if release_name and release_name != tag:
-        # 일반적인 접두사 제거
-        prefixes = ["Release ", "release ", "version ", "v", "Version "]
-        for prefix in prefixes:
-            if release_name.lower().startswith(prefix.lower()):
-                release_name = release_name[len(prefix):]
-        title = release_name.strip()
+    if release_name := release_data.get("name", "").strip():
+        # 태그와 같은 경우 제외
+        if release_name != tag:
+            # 일반적인 접두사 제거
+            prefixes = ["Release ", "release ", "version ", "v", "Version "]
+            for prefix in prefixes:
+                if release_name.lower().startswith(prefix.lower()):
+                    release_name = release_name[len(prefix):]
+            title = f"\n> {release_name.strip()}"
     
-    # 메타 정보
-    meta = f"`{tag}`"
-    if title:
-        meta = f"{meta} {title}"
+    # 날짜와 링크
+    meta = f"릴리스: {format_date(published)}"
+    link = f"<{release_data['html_url']}>"
     
-    return header, meta, published
+    return {
+        "repo_line": repo_line,
+        "title": title,
+        "meta": meta,
+        "link": link
+    }
 
 # 2. 메인 로직 --------------------------------------------------------------
 def main() -> None:
@@ -172,35 +178,26 @@ def main() -> None:
                 if not release_data:
                     continue
 
-                # 제목과 메타 정보 구성
-                header, meta, published = format_release_title(nr['repo'], release_data, nr['tag'], nr['published'])
+                # 릴리스 정보 포맷팅
+                info = format_release_info(nr['repo'], release_data, nr['tag'], nr['published'])
                 
                 # 메시지 블록 구성
-                blocks.extend([
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": header
-                        }
-                    },
-                    {
-                        "type": "context",
-                        "elements": [{
-                            "type": "mrkdwn",
-                            "text": f"{meta} • {published} • <{nr['html_url']}|보기>"
-                        }]
-                    },
-                    {"type": "divider"}
-                ])
+                message = [info['repo_line']]
+                if info['title']:
+                    message.append(info['title'])
+                message.extend([info['meta'], info['link']])
+                
+                blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "\n".join(message)
+                    }
+                })
+                blocks.append({"type": "divider"})
                 
                 # 폴백 텍스트용
-                text_contents.extend([
-                    header,
-                    f"{meta} • {published}",
-                    f"링크: {nr['html_url']}",
-                    "---"
-                ])
+                text_contents.extend(message + ["---"])
             
             # 마지막 구분선 제거
             if blocks:
