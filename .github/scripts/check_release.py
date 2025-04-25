@@ -15,9 +15,7 @@ import sys
 import time
 from pathlib import Path
 import yaml
-import requests
-from github import Github
-from github.GithubException import GithubException
+from github import Github, GithubException
 
 # 0. 설정 -------------------------------------------------------------------
 CACHE_PATH = Path(".cache/releases.json")   # 이전 릴리즈 캐시
@@ -145,7 +143,7 @@ def main() -> None:
 
         prev_tag = prev.get(repo)
         if prev_tag != tag:
-            if prev_tag:  # 이전 버전이 있는 경우에만 버전 변경으로 간주
+            if prev_tag:
                 has_version_changes = True
             new_releases.append({
                 "repo": repo,
@@ -156,7 +154,10 @@ def main() -> None:
                 "html_url": data["html_url"],
             })
 
-        time.sleep(0.3)  # API 레이트 리밋 고려
+        time.sleep(0.3)
+
+    # 날짜순으로 정렬 (최신순)
+    new_releases.sort(key=lambda x: x["published"], reverse=True)
 
     save_cache(current)
 
@@ -166,7 +167,6 @@ def main() -> None:
         if new_releases:
             blocks = []
             attachments = []
-            text_contents = []
             
             # 헤더 추가
             header_text = "🚀 *새로운 릴리스를 확인했습니다*"
@@ -213,8 +213,6 @@ def main() -> None:
                 }
             })
             
-            text_contents.extend([header_text, guide_text, "---", " "])
-            
             for nr in new_releases:
                 # 메시지 블록 구성
                 block = format_release_info(
@@ -228,12 +226,11 @@ def main() -> None:
                     nr.get('prev_tag')
                 )
                 blocks.append(block)
-                text_contents.append(block["text"]["text"])
             
             payload = {
                 "blocks": blocks,
                 "attachments": attachments,
-                "text": "\n".join(text_contents)
+                "text": f"🚀 새로운 릴리스가 발견되었습니다. ({len(new_releases)}개)"
             }
             
             f.write(f"has_new=true\n")
