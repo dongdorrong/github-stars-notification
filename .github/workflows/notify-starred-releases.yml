@@ -19,9 +19,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r .github/scripts/requirements.txt
 
-      - name: Clear cache
-        run: rm -rf .cache
-
       - name: Restore cache
         uses: actions/cache@v4
         with:

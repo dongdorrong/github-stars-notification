@@ -148,8 +148,17 @@ def main() -> None:
         tag = data["tag_name"]
         current[repo] = tag
 
-        # 첫 실행이 아닐 때만 새로운 릴리스 확인
-        if not first_run:
+        # 첫 실행일 때는 모든 릴리스를 포함
+        if first_run:
+            new_releases.append({
+                "repo": repo,
+                "tag": tag,
+                "prev_tag": None,
+                "name": data.get("name") or "",
+                "published": data["published_at"],
+                "html_url": data["html_url"],
+            })
+        else:
             prev_tag = prev.get(repo)
             if prev_tag != tag:
                 if prev_tag:
@@ -174,16 +183,13 @@ def main() -> None:
     # GitHub Actions 출력
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
-        if first_run:
-            print("첫 실행입니다. 캐시를 생성하고 다음 실행부터 새로운 릴리스를 알림합니다.")
-            f.write("has_new=false\n")
-        elif new_releases:
+        if new_releases:
             blocks = []
             attachments = []
             text_contents = []
             
-            # 헤더 추가
-            header_text = "🚀 *새로운 릴리스를 확인했습니다*"
+            # 헤더 추가 (첫 실행일 때는 다른 메시지)
+            header_text = "🌟 *스타 저장소의 현재 릴리스 목록입니다*" if first_run else "🚀 *새로운 릴리스를 확인했습니다*"
             blocks.append({
                 "type": "section",
                 "text": {
@@ -193,8 +199,8 @@ def main() -> None:
             })
             text_contents.append(header_text)
             
-            # 버전 변경 경고 (빨간색)
-            if has_version_changes:
+            # 버전 변경 경고 (첫 실행이 아닐 때만)
+            if not first_run and has_version_changes:
                 warning_text = "❗ *버전 변경이 포함된 릴리스가 있습니다. 반드시 확인해주세요!*"
                 attachments.append({
                     "color": "#FF0000",
