@@ -167,6 +167,7 @@ def main() -> None:
         if new_releases:
             blocks = []
             attachments = []
+            text_contents = []
             
             # 헤더 추가
             header_text = "🚀 *새로운 릴리스를 확인했습니다*"
@@ -177,19 +178,22 @@ def main() -> None:
                     "text": header_text
                 }
             })
+            text_contents.append(header_text)
             
             # 버전 변경 경고 (빨간색)
             if has_version_changes:
+                warning_text = "❗ *버전 변경이 포함된 릴리스가 있습니다. 반드시 확인해주세요!*"
                 attachments.append({
                     "color": "#FF0000",
                     "blocks": [{
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": "❗ *버전 변경이 포함된 릴리스가 있습니다. 반드시 확인해주세요!*"
+                            "text": warning_text
                         }
                     }]
                 })
+                text_contents.append(warning_text)
             
             # 안내 메시지 추가
             guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
@@ -202,6 +206,7 @@ def main() -> None:
                     "text": guide_text
                 }
             })
+            text_contents.append(guide_text)
             
             # 여백 추가
             blocks.append({"type": "divider"})
@@ -212,6 +217,8 @@ def main() -> None:
                     "text": " "  # 빈 줄 추가
                 }
             })
+            text_contents.append("---")
+            text_contents.append(" ")
             
             for nr in new_releases:
                 # 메시지 블록 구성
@@ -226,11 +233,12 @@ def main() -> None:
                     nr.get('prev_tag')
                 )
                 blocks.append(block)
+                text_contents.append(block["text"]["text"])
             
             payload = {
                 "blocks": blocks,
                 "attachments": attachments,
-                "text": f"🚀 새로운 릴리스가 발견되었습니다. ({len(new_releases)}개)"
+                "text": "\n".join(text_contents)
             }
             
             f.write(f"has_new=true\n")
