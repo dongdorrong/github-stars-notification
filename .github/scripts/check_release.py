@@ -60,6 +60,10 @@ def save_cache(data: dict) -> None:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
+def is_first_run() -> bool:
+    """캐시 파일의 존재 여부로 첫 실행인지 확인"""
+    return not CACHE_PATH.exists()
+
 def load_config() -> dict:
     """설정 파일 로드"""
     config_path = Path("config.yaml")
@@ -124,6 +128,9 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str,
     }
 
 def main() -> None:
+    # 캐시 파일 존재 여부 확인
+    first_run = is_first_run()
+    
     prev = load_cache()
     current: dict[str, str] = {}
     new_releases: list[dict] = []
@@ -141,30 +148,36 @@ def main() -> None:
         tag = data["tag_name"]
         current[repo] = tag
 
-        prev_tag = prev.get(repo)
-        if prev_tag != tag:
-            if prev_tag:
-                has_version_changes = True
-            new_releases.append({
-                "repo": repo,
-                "tag": tag,
-                "prev_tag": prev_tag,
-                "name": data.get("name") or "",
-                "published": data["published_at"],
-                "html_url": data["html_url"],
-            })
+        # 첫 실행이 아닐 때만 새로운 릴리스 확인
+        if not first_run:
+            prev_tag = prev.get(repo)
+            if prev_tag != tag:
+                if prev_tag:
+                    has_version_changes = True
+                new_releases.append({
+                    "repo": repo,
+                    "tag": tag,
+                    "prev_tag": prev_tag,
+                    "name": data.get("name") or "",
+                    "published": data["published_at"],
+                    "html_url": data["html_url"],
+                })
 
         time.sleep(0.3)
 
     # 날짜순으로 정렬 (최신순)
     new_releases.sort(key=lambda x: x["published"], reverse=True)
 
+    # 캐시 저장
     save_cache(current)
 
     # GitHub Actions 출력
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
-        if new_releases:
+        if first_run:
+            print("첫 실행입니다. 캐시를 생성하고 다음 실행부터 새로운 릴리스를 알림합니다.")
+            f.write("has_new=false\n")
+        elif new_releases:
             blocks = []
             attachments = []
             text_contents = []
