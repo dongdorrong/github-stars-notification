@@ -79,33 +79,17 @@ def format_date(date_str: str) -> str:
     """날짜를 더 읽기 쉬운 형식으로 변환"""
     return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
 
-def format_release_info(repo: str, release_data: dict, tag: str, published: str, prev_tag: str = None) -> dict:
-    """릴리스 정보를 슬랙 메시지 블록으로 포맷팅"""
-    # 설정 로드
+def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
+    """최신 릴리스 정보만 슬랙 메시지 블록으로 포맷팅 (버전 비교 없이)"""
     config = load_config()
     is_special = normalize_repo_name(repo) in config["special_projects"]
-    
     parts = []
-    
-    # 1. 저장소 이름
     org, repo_name = repo.split('/')
     header = f"*{org}* / *{repo_name}*"
-    
-    # 특별 프로젝트인 경우 스타일 강조
     if is_special:
         header = f"⭐ {header}"
-    
-    # 버전 변경이 있는 경우 빨간 느낌표 추가
-    if prev_tag:
-        header = f"❗ {header}"
-    
     parts.append(header)
-    
-    # 2. 태그 정보와 릴리스 링크
     tag_info = f"<{release_data['html_url']}|`{tag}`>"
-    if prev_tag:
-        tag_info = f"<{release_data['html_url']}|`{prev_tag} → {tag}`>"
-        
     if release_name := release_data.get("name", "").strip():
         if release_name != tag:
             prefixes = ["Release ", "release ", "version ", "v", "Version "]
@@ -114,11 +98,8 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str,
                     release_name = release_name[len(prefix):]
             tag_info += f" - _{release_name.strip()}_"
     parts.append(tag_info)
-    
-    # 3. 날짜 정보
     date_info = format_date(published)
     parts.append(date_info)
-    
     return {
         "type": "section",
         "text": {
@@ -130,48 +111,42 @@ def format_release_info(repo: str, release_data: dict, tag: str, published: str,
 def main() -> None:
     # 캐시 파일 존재 여부 확인
     first_run = is_first_run()
-    
     prev = load_cache()
-    current: dict[str, str] = {}
+    current: dict[str, dict] = {}
     new_releases: list[dict] = []
-    has_version_changes = False
 
     for repo in REPOS_FILE.read_text().splitlines():
         repo = repo.strip()
         if not repo:
             continue
-            
         data = get_latest_release(repo)
         if not data:
             continue
-
         tag = data["tag_name"]
-        current[repo] = tag
+        published = data["published_at"]
+        current[repo] = {"tag": tag, "published": published}
 
         # 첫 실행일 때는 모든 릴리스를 포함
         if first_run:
             new_releases.append({
                 "repo": repo,
                 "tag": tag,
-                "prev_tag": None,
                 "name": data.get("name") or "",
-                "published": data["published_at"],
+                "published": published,
                 "html_url": data["html_url"],
             })
         else:
-            prev_tag = prev.get(repo)
-            if prev_tag != tag:
-                if prev_tag:
-                    has_version_changes = True
+            prev_info = prev.get(repo)
+            prev_published = prev_info["published"] if prev_info else None
+            # 날짜 비교: 최신 릴리스가 더 최신이면 알림
+            if (not prev_published) or (published > prev_published):
                 new_releases.append({
                     "repo": repo,
                     "tag": tag,
-                    "prev_tag": prev_tag,
                     "name": data.get("name") or "",
-                    "published": data["published_at"],
+                    "published": published,
                     "html_url": data["html_url"],
                 })
-
         time.sleep(0.3)
 
     # 날짜순으로 정렬 (최신순)
@@ -199,21 +174,6 @@ def main() -> None:
             })
             text_contents.append(header_text)
             
-            # 버전 변경 경고 (첫 실행이 아닐 때만)
-            if not first_run and has_version_changes:
-                warning_text = "❗ *버전 변경이 포함된 릴리스가 있습니다. 반드시 확인해주세요!*"
-                attachments.append({
-                    "color": "#FF0000",
-                    "blocks": [{
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": warning_text
-                        }
-                    }]
-                })
-                text_contents.append(warning_text)
-            
             # 안내 메시지 추가
             guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
                          "• `config.yaml` 파일에 프로젝트를 추가하면 ⭐ 로 강조 표시됩니다\n"
@@ -240,16 +200,15 @@ def main() -> None:
             text_contents.append(" ")
             
             for nr in new_releases:
-                # 메시지 블록 구성
+                # 메시지 블록 구성 (버전 비교 없이 최신 릴리스 정보만 전달)
                 block = format_release_info(
-                    nr['repo'], 
+                    nr['repo'],
                     {
                         "html_url": nr["html_url"],
                         "name": nr["name"]
                     },
-                    nr['tag'], 
-                    nr['published'],
-                    nr.get('prev_tag')
+                    nr['tag'],
+                    nr['published']
                 )
                 blocks.append(block)
                 text_contents.append(block["text"]["text"])
