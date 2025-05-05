@@ -1,6 +1,6 @@
 name: Notify Starred Releases
 on:
-  schedule: [cron: '0 9 * * *']
+  schedule: [cron: '0 9 * * 1']
   workflow_dispatch:
 
 jobs:
@@ -45,4 +45,10 @@ jobs:
         with:
           payload: ${{ steps.detect.outputs.payload }}
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }} 
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Save cache
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: ${{ runner.os }}-releases-cache 
