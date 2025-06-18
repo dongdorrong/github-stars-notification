@@ -39,13 +39,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
-      - name: Notify Slack
+      - name: Notify Discord
         if: success() && steps.detect.outputs.has_new == 'true'
-        uses: slackapi/slack-github-action@v1
-        with:
-          payload: ${{ steps.detect.outputs.payload }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d '${{ steps.detect.outputs.payload }}' \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}
 
       - name: Save cache
         uses: actions/cache/save@v4

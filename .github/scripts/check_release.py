@@ -80,31 +80,33 @@ def format_date(date_str: str) -> str:
     return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
 
 def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
-    """최신 릴리스 정보만 슬랙 메시지 블록으로 포맷팅 (버전 비교 없이)"""
+    """최신 릴리스 정보를 Discord 임베드 형식으로 포맷팅"""
     config = load_config()
     is_special = normalize_repo_name(repo) in config["special_projects"]
-    parts = []
     org, repo_name = repo.split('/')
-    header = f"*{org}* / *{repo_name}*"
+    
+    # 제목 구성
+    title = f"{org} / {repo_name}"
     if is_special:
-        header = f"⭐ {header}"
-    parts.append(header)
-    tag_info = f"<{release_data['html_url']}|`{tag}`>"
+        title = f"⭐ {title}"
+    
+    # 설명 구성
+    description_parts = [f"[`{tag}`]({release_data['html_url']})"]
     if release_name := release_data.get("name", "").strip():
         if release_name != tag:
             prefixes = ["Release ", "release ", "version ", "v", "Version "]
             for prefix in prefixes:
                 if release_name.lower().startswith(prefix.lower()):
                     release_name = release_name[len(prefix):]
-            tag_info += f" - _{release_name.strip()}_"
-    parts.append(tag_info)
-    date_info = format_date(published)
-    parts.append(date_info)
+            description_parts.append(f"*{release_name.strip()}*")
+    
     return {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": " ".join(parts)
+        "title": title,
+        "description": " - ".join(description_parts),
+        "url": release_data['html_url'],
+        "color": 0x5865F2,  # Discord 블루 색상
+        "footer": {
+            "text": f"Released on {format_date(published)}"
         }
     }
 
@@ -159,49 +161,25 @@ def main() -> None:
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
         if new_releases:
-            blocks = []
-            attachments = []
-            text_contents = []
+            embeds = []
             
-            # 헤더 추가 (첫 실행일 때는 다른 메시지)
-            header_text = "🌟 *스타 저장소의 현재 릴리스 목록입니다*" if first_run else "🚀 *새로운 릴리스를 확인했습니다*"
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": header_text
-                }
-            })
-            text_contents.append(header_text)
-            
-            # 안내 메시지 추가
-            guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
+            # 헤더 임베드 추가 (첫 실행일 때는 다른 메시지)
+            header_text = "🌟 **스타 저장소의 현재 릴리스 목록입니다**" if first_run else "🚀 **새로운 릴리스를 확인했습니다**"
+            guide_text = ("💡 **중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!**\n"
                          "• `config.yaml` 파일에 프로젝트를 추가하면 ⭐ 로 강조 표시됩니다\n"
                          "• GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으시면 됩니다")
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": guide_text
-                }
-            })
-            text_contents.append(guide_text)
             
-            # 여백 추가
-            blocks.append({"type": "divider"})
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": " "  # 빈 줄 추가
-                }
-            })
-            text_contents.append("---")
-            text_contents.append(" ")
+            header_embed = {
+                "title": header_text,
+                "description": guide_text,
+                "color": 0x00D2FF,  # 하늘색
+                "timestamp": new_releases[0]["published"] + "T00:00:00.000Z"
+            }
+            embeds.append(header_embed)
             
+            # 각 릴리스에 대한 임베드 추가
             for nr in new_releases:
-                # 메시지 블록 구성 (버전 비교 없이 최신 릴리스 정보만 전달)
-                block = format_release_info(
+                embed = format_release_info(
                     nr['repo'],
                     {
                         "html_url": nr["html_url"],
@@ -210,13 +188,12 @@ def main() -> None:
                     nr['tag'],
                     nr['published']
                 )
-                blocks.append(block)
-                text_contents.append(block["text"]["text"])
+                embeds.append(embed)
             
+            # Discord 웹훅 payload 형식
             payload = {
-                "blocks": blocks,
-                "attachments": attachments,
-                "text": "\n".join(text_contents)
+                "content": "",
+                "embeds": embeds
             }
             
             f.write(f"has_new=true\n")
