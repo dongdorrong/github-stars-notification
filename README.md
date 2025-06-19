@@ -6,7 +6,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/dongdorrong/github-stars-notification?style=social)](https://github.com/dongdorrong/github-stars-notification)
 
 GitHub에서 스타를 준 저장소의 새로운 릴리스를 자동으로 감지하여 <br>
-Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
+Discord로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 
 </div>
 
@@ -14,7 +14,7 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 
 - 🔍 GitHub 스타 저장소의 최신 릴리스 자동 감지
 - ⏰ 매일 오전 9시 자동 체크
-- 💬 Slack을 통한 새로운 릴리스 알림 (최신순 정렬)
+- 💬 Discord를 통한 새로운 릴리스 알림 (최신순 정렬)
 - 💾 릴리스 정보 캐싱으로 중복 알림 방지
 - ⭐ 관심 프로젝트 강조 표시
 - 📝 버전 업데이트 감지
@@ -33,10 +33,10 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 ✓ Repository Secrets에 GH_PAT로 저장
 ```
 
-### 2️⃣ Slack Webhook URL 설정
+### 2️⃣ Discord Webhook URL 설정
 ```bash
-✓ Slack App에서 Incoming Webhook 생성
-✓ Repository Secrets에 SLACK_WEBHOOK로 저장
+✓ Discord 서버 설정에서 Webhook 생성
+✓ Repository Secrets에 DISCORD_WEBHOOK로 저장
 ```
 
 ### 3️⃣ 관심 프로젝트 설정 (선택사항)
@@ -52,7 +52,7 @@ GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으면 됩�
 
 ## 📬 알림 형식
 
-새로운 릴리스가 감지되면 다음과 같은 형식으로 Slack 메시지가 전송됩니다:
+새로운 릴리스가 감지되면 다음과 같은 형식으로 Discord 메시지가 전송됩니다:
 
 ### 메시지 구성
 1. 헤더
