@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=import-error
 """
 check_release.py
 Star 목록( repos.txt )을 읽어 최신 릴리즈를 확인하고,
@@ -15,7 +16,8 @@ import sys
 import time
 from pathlib import Path
 import yaml
-from github import Github, GithubException
+from github import Github  # type: ignore
+from github.GithubException import GithubException  # type: ignore
 
 # 0. 설정 -------------------------------------------------------------------
 CACHE_PATH = Path(".cache/releases.json")   # 이전 릴리즈 캐시
@@ -79,36 +81,7 @@ def format_date(date_str: str) -> str:
     """날짜를 더 읽기 쉬운 형식으로 변환"""
     return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
 
-def format_release_info(repo: str, release_data: dict, tag: str, published: str) -> dict:
-    """최신 릴리스 정보를 Discord 임베드 형식으로 포맷팅"""
-    config = load_config()
-    is_special = normalize_repo_name(repo) in config["special_projects"]
-    org, repo_name = repo.split('/')
-    
-    # 제목 구성
-    title = f"{org} / {repo_name}"
-    if is_special:
-        title = f"⭐ {title}"
-    
-    # 설명 구성
-    description_parts = [f"[`{tag}`]({release_data['html_url']})"]
-    if release_name := release_data.get("name", "").strip():
-        if release_name != tag:
-            prefixes = ["Release ", "release ", "version ", "v", "Version "]
-            for prefix in prefixes:
-                if release_name.lower().startswith(prefix.lower()):
-                    release_name = release_name[len(prefix):]
-            description_parts.append(f"*{release_name.strip()}*")
-    
-    return {
-        "title": title,
-        "description": " - ".join(description_parts),
-        "url": release_data['html_url'],
-        "color": 0x5865F2,  # Discord 블루 색상
-        "footer": {
-            "text": f"Released on {format_date(published)}"
-        }
-    }
+
 
 def main() -> None:
     # 캐시 파일 존재 여부 확인
@@ -169,34 +142,53 @@ def main() -> None:
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
         if new_releases:
-            embeds = []
-            
-            # 헤더 임베드 추가 (첫 실행일 때는 다른 메시지)
+            # 헤더 텍스트
             header_text = "🌟 **스타 저장소의 현재 릴리스 목록입니다**" if first_run else "🚀 **새로운 릴리스를 확인했습니다**"
             guide_text = ("💡 **중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!**\n"
                          "• `config.yaml` 파일에 프로젝트를 추가하면 ⭐ 로 강조 표시됩니다\n"
                          "• GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으시면 됩니다")
             
-            header_embed = {
+            # 모든 릴리스 정보를 하나의 문자열로 구성
+            config = load_config()
+            release_lines = []
+            
+            for nr in new_releases:
+                is_special = normalize_repo_name(nr['repo']) in config["special_projects"]
+                org, repo_name = nr['repo'].split('/')
+                
+                # 제목 구성
+                title = f"**{org}** / **{repo_name}**"
+                if is_special:
+                    title = f"⭐ {title}"
+                
+                # 설명 구성
+                description_parts = [f"[`{nr['tag']}`]({nr['html_url']})"]
+                if release_name := nr.get("name", "").strip():
+                    if release_name != nr['tag']:
+                        prefixes = ["Release ", "release ", "version ", "v", "Version "]
+                        for prefix in prefixes:
+                            if release_name.lower().startswith(prefix.lower()):
+                                release_name = release_name[len(prefix):]
+                        description_parts.append(f"*{release_name.strip()}*")
+                
+                description_parts.append(format_date(nr['published']))
+                
+                # 한 줄로 구성
+                release_line = f"{title} {' - '.join(description_parts)}"
+                release_lines.append(release_line)
+            
+            # 전체 description 구성
+            full_description = f"{guide_text}\n\n---\n\n" + "\n".join(release_lines)
+            
+            # 하나의 embed에 모든 정보 담기
+            embed = {
                 "title": header_text,
-                "description": guide_text,
-                "color": 0x00D2FF,  # 하늘색
+                "description": full_description,
+                "color": 0x5865F2,  # Discord 블루 색상
                 "timestamp": new_releases[0]["published"] + "T00:00:00.000Z"
             }
-            embeds.append(header_embed)
             
-            # 각 릴리스에 대한 임베드 추가
-            for nr in new_releases:
-                embed = format_release_info(
-                    nr['repo'],
-                    {
-                        "html_url": nr["html_url"],
-                        "name": nr["name"]
-                    },
-                    nr['tag'],
-                    nr['published']
-                )
-                embeds.append(embed)
+            embeds = [embed]
             
             # Discord 웹훅 payload 형식
             payload = {
