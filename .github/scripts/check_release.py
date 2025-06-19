@@ -177,32 +177,90 @@ def main() -> None:
                 release_line = f"{title} {' - '.join(description_parts)}"
                 release_lines.append(release_line)
             
-            # 전체 description 구성
-            full_description = f"{guide_text}\n\n---\n\n" + "\n".join(release_lines)
+            # Discord 제한에 맞게 여러 메시지로 분할
+            MAX_DESC_LENGTH = 3800  # 4096자 제한에서 여유분 확보
             
-            # 하나의 embed에 모든 정보 담기
-            embed = {
-                "title": header_text,
-                "description": full_description,
-                "color": 0x5865F2,  # Discord 블루 색상
-                "timestamp": new_releases[0]["published"] + "T00:00:00.000Z"
-            }
+            # 첫 번째 메시지: 헤더 + 가이드 + 일부 릴리스
+            header_desc = f"{guide_text}\n\n---\n\n"
+            current_desc = header_desc
+            messages = []
+            current_releases = []
             
-            embeds = [embed]
+            for i, release_line in enumerate(release_lines):
+                test_desc = current_desc + release_line + "\n"
+                
+                if len(test_desc) > MAX_DESC_LENGTH and current_releases:
+                    # 현재 메시지 완성하고 새 메시지 시작
+                    embed = {
+                        "title": header_text if not messages else f"🚀 **새로운 릴리스 (계속) - {len(messages)+1}**",
+                        "description": current_desc.rstrip(),
+                        "color": 0x5865F2,
+                        "timestamp": new_releases[0]["published"] + "T00:00:00.000Z"
+                    }
+                    messages.append(embed)
+                    
+                    # 새 메시지 시작 (헤더는 첫 번째만)
+                    current_desc = release_line + "\n"
+                    current_releases = [release_line]
+                else:
+                    current_desc = test_desc
+                    current_releases.append(release_line)
             
-            # Discord 웹훅 payload 형식
-            payload = {
-                "content": "",
-                "embeds": embeds
-            }
+            # 마지막 메시지 추가
+            if current_releases:
+                embed = {
+                    "title": header_text if not messages else f"🚀 **새로운 릴리스 (마지막) - {len(messages)+1}**",
+                    "description": current_desc.rstrip(),
+                    "color": 0x5865F2,
+                    "timestamp": new_releases[0]["published"] + "T00:00:00.000Z"
+                }
+                messages.append(embed)
+            
+            # 여러 메시지가 있을 경우 총 개수 표시
+            if len(messages) > 1:
+                for i, message in enumerate(messages):
+                    if i == 0:
+                        message["title"] = f"🚀 **새로운 릴리스 ({len(new_releases)}개) - 1/{len(messages)}**"
+                    else:
+                        message["title"] = f"🚀 **새로운 릴리스 (계속) - {i+1}/{len(messages)}**"
+            
+            embeds = messages
+            
+            # 여러 Discord 웹훅 payload 형식
+            payloads = []
+            for i, embed in enumerate(embeds):
+                payload = {
+                    "content": "",
+                    "embeds": [embed]
+                }
+                payloads.append(payload)
+            
+            # JSON 배열로 모든 payload 출력 (동적 처리용)
+            payloads_json = json.dumps(payloads)
             
             f.write(f"has_new=true\n")
-            safe = json.dumps(payload).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
-            f.write(f"payload={safe}\n")
-            print(f"DEBUG: Payload written to GitHub Actions output (length: {len(safe)})")
+            f.write(f"message_count={len(payloads)}\n")
+            f.write(f"payloads={payloads_json}\n")
+            
+            print(f"DEBUG: Generated {len(payloads)} messages")
+            for i, payload in enumerate(payloads):
+                print(f"DEBUG: Message {i+1}: {payload['embeds'][0]['title']}")
+                print(f"DEBUG: Description length: {len(payload['embeds'][0]['description'])}")
+            
+            # 기존 호환성을 위한 첫 번째 payload
+            if payloads:
+                safe = json.dumps(payloads[0]).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
+                f.write(f"payload={safe}\n")
         else:
+            # 테스트를 위해 빈 메시지라도 보내도록 함
+            empty_payload = {
+                "content": "테스트: 새로운 릴리스가 없습니다.",
+                "embeds": []
+            }
+            safe = json.dumps(empty_payload).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
+            f.write(f"payload={safe}\n")
             f.write("has_new=false\n")
-            print("DEBUG: No new releases found, has_new=false")
+            print("DEBUG: No new releases found, sending test message")
 
 if __name__ == "__main__":
     try:

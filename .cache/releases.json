@@ -1,0 +1,314 @@
+{
+  "philippemerle/KubeDiagrams": {
+    "tag": "v0.3.0",
+    "published": "2025-04-29"
+  },
+  "kubeflow/kubeflow": {
+    "tag": "v1.10.0",
+    "published": "2025-03-25"
+  },
+  "awslabs/mcp": {
+    "tag": "2025.6.2025171901",
+    "published": "2025-06-17"
+  },
+  "mirceanton/kubectl-switch": {
+    "tag": "v2.2.6",
+    "published": "2025-05-22"
+  },
+  "brush701/keechallenge": {
+    "tag": "1.5",
+    "published": "2016-05-11"
+  },
+  "KoenZomers/KeePassOneDriveSync": {
+    "tag": "2.1.2.2",
+    "published": "2021-11-24"
+  },
+  "aws/aws-application-networking-k8s": {
+    "tag": "v1.1.2",
+    "published": "2025-06-05"
+  },
+  "samber/awesome-prometheus-alerts": {
+    "tag": "2025-04-17.1",
+    "published": "2025-04-17"
+  },
+  "rabbitmq/cluster-operator": {
+    "tag": "v2.14.0",
+    "published": "2025-06-03"
+  },
+  "kubernetes-sigs/aws-ebs-csi-driver": {
+    "tag": "v1.44.0",
+    "published": "2025-05-21"
+  },
+  "kubernetes-sigs/aws-efs-csi-driver": {
+    "tag": "helm-chart-aws-efs-csi-driver-3.1.9",
+    "published": "2025-05-05"
+  },
+  "eksctl-io/eksctl": {
+    "tag": "v0.210.0",
+    "published": "2025-06-07"
+  },
+  "nektos/act": {
+    "tag": "v0.2.78",
+    "published": "2025-06-01"
+  },
+  "ravikiranvm/aws-finops-dashboard": {
+    "tag": "v2.2.6",
+    "published": "2025-05-10"
+  },
+  "argoproj/argo-cd": {
+    "tag": "v3.0.6",
+    "published": "2025-06-09"
+  },
+  "kubernetes-sigs/karpenter": {
+    "tag": "v1.5.0",
+    "published": "2025-05-23"
+  },
+  "aws/karpenter-provider-aws": {
+    "tag": "v1.5.0",
+    "published": "2025-05-23"
+  },
+  "emberstack/kubernetes-reflector": {
+    "tag": "v9.1.12",
+    "published": "2025-06-10"
+  },
+  "KunHwanAhn/next-cdn-ecs-ex": {
+    "tag": "24.04.1",
+    "published": "2024-04-10"
+  },
+  "kubecost/disk-autoscaler": {
+    "tag": "0.0.20",
+    "published": "2024-10-16"
+  },
+  "google/kube-startup-cpu-boost": {
+    "tag": "v0.15.0",
+    "published": "2025-04-14"
+  },
+  "robusta-dev/krr": {
+    "tag": "v1.23.0",
+    "published": "2025-03-28"
+  },
+  "opensearch-project/opensearch-k8s-operator": {
+    "tag": "v2.7.0",
+    "published": "2024-11-06"
+  },
+  "kubernetes-sigs/aws-load-balancer-controller": {
+    "tag": "v2.13.3",
+    "published": "2025-06-16"
+  },
+  "metrico/gigapipe": {
+    "tag": "v4.0.14-beta",
+    "published": "2025-06-09"
+  },
+  "kubeshark/kubeshark": {
+    "tag": "v52.7.8",
+    "published": "2025-06-16"
+  },
+  "terraform-aws-modules/terraform-aws-iam": {
+    "tag": "v5.58.0",
+    "published": "2025-06-04"
+  },
+  "terraform-aws-modules/terraform-aws-eks": {
+    "tag": "v20.37.1",
+    "published": "2025-06-18"
+  },
+  "traefik/traefik": {
+    "tag": "v3.4.1",
+    "published": "2025-05-27"
+  },
+  "Kong/kong": {
+    "tag": "3.9.1",
+    "published": "2025-06-04"
+  },
+  "grafana/k6": {
+    "tag": "v1.0.0",
+    "published": "2025-05-06"
+  },
+  "litmuschaos/litmus-helm": {
+    "tag": "litmus-agent-3.19.0",
+    "published": "2025-05-21"
+  },
+  "meshery/meshery": {
+    "tag": "v0.8.105",
+    "published": "2025-06-18"
+  },
+  "litmuschaos/litmus": {
+    "tag": "3.19.0",
+    "published": "2025-05-19"
+  },
+  "kubernetes-sigs/external-dns": {
+    "tag": "v0.17.0",
+    "published": "2025-05-14"
+  },
+  "elastic/elasticsearch": {
+    "tag": "v9.0.2",
+    "published": "2025-06-03"
+  },
+  "elastic/cloud-on-k8s": {
+    "tag": "v3.0.0",
+    "published": "2025-04-15"
+  },
+  "aws/amazon-vpc-cni-k8s": {
+    "tag": "v1.19.5",
+    "published": "2025-05-06"
+  },
+  "pulumi/pulumi": {
+    "tag": "v3.177.0",
+    "published": "2025-06-13"
+  },
+  "kyverno/kyverno": {
+    "tag": "v1.14.2",
+    "published": "2025-06-03"
+  },
+  "cert-manager/cert-manager": {
+    "tag": "v1.18.1",
+    "published": "2025-06-18"
+  },
+  "cilium/cilium": {
+    "tag": "v1.17.4",
+    "published": "2025-05-15"
+  },
+  "flannel-io/flannel": {
+    "tag": "v0.27.0",
+    "published": "2025-06-04"
+  },
+  "projectcalico/calico": {
+    "tag": "v3.30.1",
+    "published": "2025-05-30"
+  },
+  "opensearch-project/OpenSearch": {
+    "tag": "3.0.0",
+    "published": "2025-05-06"
+  },
+  "opensearch-project/OpenSearch-Dashboards": {
+    "tag": "3.0.0",
+    "published": "2025-05-07"
+  },
+  "fluent/fluent-bit": {
+    "tag": "v4.0.3",
+    "published": "2025-05-30"
+  },
+  "fluent/fluentd": {
+    "tag": "v1.18.0",
+    "published": "2024-11-29"
+  },
+  "elastic/kibana": {
+    "tag": "v9.0.2",
+    "published": "2025-06-03"
+  },
+  "kubernetes/kubernetes": {
+    "tag": "v1.33.2",
+    "published": "2025-06-18"
+  },
+  "etcd-io/etcd": {
+    "tag": "v3.6.1",
+    "published": "2025-06-06"
+  },
+  "fluxcd/flux2": {
+    "tag": "v2.6.2",
+    "published": "2025-06-16"
+  },
+  "fluxcd/flagger": {
+    "tag": "v1.41.0",
+    "published": "2025-04-02"
+  },
+  "aquasecurity/tracee": {
+    "tag": "v0.23.1",
+    "published": "2025-04-02"
+  },
+  "paketo-buildpacks/bellsoft-liberica": {
+    "tag": "v11.2.3",
+    "published": "2025-06-08"
+  },
+  "grafana/tempo": {
+    "tag": "v2.8.1",
+    "published": "2025-06-18"
+  },
+  "open-telemetry/opentelemetry-collector": {
+    "tag": "v0.128.0",
+    "published": "2025-06-09"
+  },
+  "vmware-tanzu/velero": {
+    "tag": "v1.16.1",
+    "published": "2025-05-19"
+  },
+  "rook/rook": {
+    "tag": "v1.17.4",
+    "published": "2025-06-05"
+  },
+  "minio/minio": {
+    "tag": "RELEASE.2025-05-24T17-08-30Z",
+    "published": "2025-05-24"
+  },
+  "sentry-kubernetes/charts": {
+    "tag": "sentry-v26.19.0",
+    "published": "2025-06-15"
+  },
+  "aquasecurity/trivy": {
+    "tag": "v0.63.0",
+    "published": "2025-05-29"
+  },
+  "bitnami-labs/sealed-secrets": {
+    "tag": "v0.30.0",
+    "published": "2025-06-12"
+  },
+  "keycloak/keycloak": {
+    "tag": "26.2.5",
+    "published": "2025-05-28"
+  },
+  "metallb/metallb": {
+    "tag": "v0.15.2",
+    "published": "2025-06-04"
+  },
+  "istio/istio": {
+    "tag": "1.26.1",
+    "published": "2025-05-29"
+  },
+  "kubernetes/ingress-nginx": {
+    "tag": "controller-v1.12.3",
+    "published": "2025-06-05"
+  },
+  "thanos-io/thanos": {
+    "tag": "v0.38.0",
+    "published": "2025-04-03"
+  },
+  "prometheus-community/helm-charts": {
+    "tag": "kube-prometheus-stack-75.3.3",
+    "published": "2025-06-18"
+  },
+  "mittwald/kubernetes-replicator": {
+    "tag": "v2.11.1",
+    "published": "2025-03-13"
+  },
+  "jertel/elastalert2": {
+    "tag": "2.25.0",
+    "published": "2025-06-12"
+  },
+  "elastic/helm-charts": {
+    "tag": "v8.5.1",
+    "published": "2022-11-16"
+  },
+  "strimzi/strimzi-kafka-operator": {
+    "tag": "0.46.0",
+    "published": "2025-05-03"
+  },
+  "kedacore/charts": {
+    "tag": "v2.17.2",
+    "published": "2025-06-18"
+  },
+  "argoproj/argo-helm": {
+    "tag": "argo-cd-8.1.1",
+    "published": "2025-06-18"
+  },
+  "goharbor/harbor-helm": {
+    "tag": "v1.17.1",
+    "published": "2025-05-28"
+  },
+  "cloudnative-pg/charts": {
+    "tag": "cloudnative-pg-v0.24.0",
+    "published": "2025-05-23"
+  },
+  "falcosecurity/charts": {
+    "tag": "falco-6.0.1",
+    "published": "2025-06-17"
+  }
+}

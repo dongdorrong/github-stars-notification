@@ -6,6 +6,10 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    outputs:
+      has_new: ${{ steps.detect.outputs.has_new }}
+      payloads: ${{ steps.detect.outputs.payloads }}
+      message_count: ${{ steps.detect.outputs.message_count }}
     steps:
       - uses: actions/checkout@v4
       
@@ -41,13 +45,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
-      - name: Notify Discord
-        if: success() && steps.detect.outputs.has_new == 'true'
+  notify:
+    needs: check
+    if: needs.check.outputs.has_new == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.check.outputs.payloads || '[{}]') }}
+    steps:
+      - name: Send Discord Message
         run: |
-          curl -X POST \
+          echo "Discord 메시지 전송 중..."
+          
+          # 메시지 순서에 따른 지연 (Rate limit 방지)
+          MESSAGE_INDEX="${{ strategy.job-index }}"
+          if [ ! -z "$MESSAGE_INDEX" ] && [ "$MESSAGE_INDEX" -gt 0 ]; then
+            DELAY=$((MESSAGE_INDEX * 3))
+            echo "${DELAY}초 대기 중... (Rate limit 방지)"
+            sleep $DELAY
+          fi
+          
+          echo "Payload 전송 중..."
+          echo '${{ toJSON(matrix) }}' | curl -X POST \
             -H "Content-Type: application/json" \
-            -d '${{ steps.detect.outputs.payload }}' \
+            -d @- \
             ${{ secrets.DISCORD_WEBHOOK_URL }}
+          
+          echo "메시지 전송 완료"
 
       - name: Save cache
         uses: actions/cache/save@v4
