@@ -157,6 +157,14 @@ def main() -> None:
     # 캐시 저장
     save_cache(current)
 
+    # 디버깅 정보 출력
+    print(f"DEBUG: Found {len(new_releases)} new releases")
+    print(f"DEBUG: First run: {first_run}")
+    if new_releases:
+        print("DEBUG: New releases found:")
+        for nr in new_releases[:3]:  # 처음 3개만 출력
+            print(f"  - {nr['repo']}: {nr['tag']} ({nr['published']})")
+
     # GitHub Actions 출력
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
@@ -199,8 +207,10 @@ def main() -> None:
             f.write(f"has_new=true\n")
             safe = json.dumps(payload).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             f.write(f"payload={safe}\n")
+            print(f"DEBUG: Payload written to GitHub Actions output (length: {len(safe)})")
         else:
             f.write("has_new=false\n")
+            print("DEBUG: No new releases found, has_new=false")
 
 if __name__ == "__main__":
     try:

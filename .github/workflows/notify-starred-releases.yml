@@ -23,7 +23,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache
-          key: ${{ runner.os }}-releases-cache
+          key: ${{ runner.os }}-releases-cache-
+          restore-keys: |
+            ${{ runner.os }}-releases-cache-
       
       - name: List starred repos
         id: star
@@ -49,6 +51,7 @@ jobs:
 
       - name: Save cache
         uses: actions/cache/save@v4
+        if: always()
         with:
           path: .cache
-          key: ${{ runner.os }}-releases-cache 
+          key: ${{ runner.os }}-releases-cache-${{ github.run_id }} 
