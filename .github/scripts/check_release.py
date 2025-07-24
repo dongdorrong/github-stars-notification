@@ -141,9 +141,13 @@ def main() -> None:
     # GitHub Actions 출력
     outputs_file = Path(os.environ["GITHUB_OUTPUT"])
     with outputs_file.open("a") as f:
-        if new_releases:
+        # 새로운 릴리스가 5개 이상일 때만 알림 전송
+        if new_releases and len(new_releases) >= 5:
             # 헤더 텍스트
-            header_text = "🌟 *스타 저장소의 현재 릴리스 목록입니다*" if first_run else "🚀 *새로운 릴리스를 확인했습니다*"
+            if first_run:
+                header_text = "🌟 *스타 저장소의 현재 릴리스 목록입니다*"
+            else:
+                header_text = f"🚀 *새로운 릴리스 {len(new_releases)}개를 확인했습니다*"
             guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
                          "• `config.yaml` 파일에 프로젝트를 추가하면 ⭐ 로 강조 표시됩니다\n"
                          "• GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으시면 됩니다")
@@ -241,15 +245,14 @@ def main() -> None:
             if payloads:
                 safe = json.dumps(payloads[0]).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
                 f.write(f"payload={safe}\n")
-        else:
-            # 테스트를 위해 빈 메시지라도 보내도록 함
-            empty_payload = {
-                "text": "테스트: 새로운 릴리스가 없습니다."
-            }
-            safe = json.dumps(empty_payload).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
-            f.write(f"payload={safe}\n")
+        elif new_releases and len(new_releases) < 5:
+            # 새로운 릴리스가 있지만 5개 미만인 경우: 캐시만 업데이트하고 알림은 보내지 않음
             f.write("has_new=false\n")
-            print("DEBUG: No new releases found, sending test message")
+            print(f"DEBUG: Found {len(new_releases)} new releases (less than 5), cache updated but no notification sent")
+        else:
+            # 새로운 릴리스가 없는 경우
+            f.write("has_new=false\n")
+            print("DEBUG: No new releases found")
 
 if __name__ == "__main__":
     try:
