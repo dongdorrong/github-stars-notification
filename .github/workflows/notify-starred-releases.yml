@@ -66,25 +66,13 @@ jobs:
           fi
           
           echo "Payload 전송 중..."
-          # Discord embeds를 Slack 형식으로 변환
-          DISCORD_PAYLOAD='${{ toJSON(matrix) }}'
+          # check_release.py에서 이미 Slack 형식으로 준비된 데이터를 그대로 사용
+          SLACK_PAYLOAD='${{ toJSON(matrix) }}'
           
-          # Discord embeds에서 Slack 형식으로 변환
-          SLACK_TEXT=$(echo "$DISCORD_PAYLOAD" | jq -r '
-            if .embeds then
-              .embeds[0] | 
-              "🌟 *" + .title + "*\n" +
-              (.description // "") + "\n" +
-              (if .fields then (.fields | map("• " + .name + ": " + .value) | join("\n")) else "" end)
-            else
-              .content // "새로운 릴리스가 있습니다!"
-            end
-          ')
-          
-          # Slack 웹훅 형식으로 전송
-          curl -X POST \
+          # Slack 웹훅으로 전송
+          echo "$SLACK_PAYLOAD" | curl -X POST \
             -H "Content-Type: application/json" \
-            -d "{\"text\": \"$SLACK_TEXT\"}" \
+            -d @- \
             ${{ secrets.SLACK_WEBHOOK_URL }}
           
           echo "메시지 전송 완료"
