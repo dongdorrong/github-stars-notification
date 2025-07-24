@@ -53,9 +53,9 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.check.outputs.payloads || '[{}]') }}
     steps:
-      - name: Send Discord Message
+      - name: Send Slack Message
         run: |
-          echo "Discord 메시지 전송 중..."
+          echo "Slack 메시지 전송 중..."
           
           # 메시지 순서에 따른 지연 (Rate limit 방지)
           MESSAGE_INDEX="${{ strategy.job-index }}"
@@ -66,10 +66,26 @@ jobs:
           fi
           
           echo "Payload 전송 중..."
-          echo '${{ toJSON(matrix) }}' | curl -X POST \
+          # Discord embeds를 Slack 형식으로 변환
+          DISCORD_PAYLOAD='${{ toJSON(matrix) }}'
+          
+          # Discord embeds에서 Slack 형식으로 변환
+          SLACK_TEXT=$(echo "$DISCORD_PAYLOAD" | jq -r '
+            if .embeds then
+              .embeds[0] | 
+              "🌟 *" + .title + "*\n" +
+              (.description // "") + "\n" +
+              (if .fields then (.fields | map("• " + .name + ": " + .value) | join("\n")) else "" end)
+            else
+              .content // "새로운 릴리스가 있습니다!"
+            end
+          ')
+          
+          # Slack 웹훅 형식으로 전송
+          curl -X POST \
             -H "Content-Type: application/json" \
-            -d @- \
-            ${{ secrets.DISCORD_WEBHOOK_URL }}
+            -d "{\"text\": \"$SLACK_TEXT\"}" \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
           
           echo "메시지 전송 완료"
 

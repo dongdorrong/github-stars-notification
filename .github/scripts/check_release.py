@@ -143,8 +143,8 @@ def main() -> None:
     with outputs_file.open("a") as f:
         if new_releases:
             # 헤더 텍스트
-            header_text = "🌟 **스타 저장소의 현재 릴리스 목록입니다**" if first_run else "🚀 **새로운 릴리스를 확인했습니다**"
-            guide_text = ("💡 **중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!**\n"
+            header_text = "🌟 *스타 저장소의 현재 릴리스 목록입니다*" if first_run else "🚀 *새로운 릴리스를 확인했습니다*"
+            guide_text = ("💡 *중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!*\n"
                          "• `config.yaml` 파일에 프로젝트를 추가하면 ⭐ 로 강조 표시됩니다\n"
                          "• GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으시면 됩니다")
             
@@ -156,20 +156,20 @@ def main() -> None:
                 is_special = normalize_repo_name(nr['repo']) in config["special_projects"]
                 org, repo_name = nr['repo'].split('/')
                 
-                # 제목 구성
-                title = f"**{org}** / **{repo_name}**"
+                # 제목 구성 (Slack 형식)
+                title = f"*{org}* / *{repo_name}*"
                 if is_special:
                     title = f"⭐ {title}"
                 
                 # 설명 구성
-                description_parts = [f"[`{nr['tag']}`]({nr['html_url']})"]
+                description_parts = [f"<{nr['html_url']}|`{nr['tag']}`>"]
                 if release_name := nr.get("name", "").strip():
                     if release_name != nr['tag']:
                         prefixes = ["Release ", "release ", "version ", "v", "Version "]
                         for prefix in prefixes:
                             if release_name.lower().startswith(prefix.lower()):
                                 release_name = release_name[len(prefix):]
-                        description_parts.append(f"*{release_name.strip()}*")
+                        description_parts.append(f"_{release_name.strip()}_")
                 
                 description_parts.append(format_date(nr['published']))
                 
@@ -177,63 +177,54 @@ def main() -> None:
                 release_line = f"{title} {' - '.join(description_parts)}"
                 release_lines.append(release_line)
             
-            # Discord 제한에 맞게 여러 메시지로 분할
-            MAX_DESC_LENGTH = 3800  # 4096자 제한에서 여유분 확보
+            # Slack 제한에 맞게 여러 메시지로 분할 (Slack은 40,000자 제한이지만 안전하게 설정)
+            MAX_TEXT_LENGTH = 35000  # 40,000자 제한에서 여유분 확보
             
             # 첫 번째 메시지: 헤더 + 가이드 + 일부 릴리스
-            header_desc = f"{guide_text}\n\n---\n\n"
-            current_desc = header_desc
+            header_text_full = f"{header_text}\n\n{guide_text}\n\n---\n\n"
+            current_text = header_text_full
             messages = []
             current_releases = []
             
             for i, release_line in enumerate(release_lines):
-                test_desc = current_desc + release_line + "\n"
+                test_text = current_text + release_line + "\n"
                 
-                if len(test_desc) > MAX_DESC_LENGTH and current_releases:
+                if len(test_text) > MAX_TEXT_LENGTH and current_releases:
                     # 현재 메시지 완성하고 새 메시지 시작
-                    embed = {
-                        "title": header_text if not messages else f"🚀 **새로운 릴리스 (계속) - {len(messages)+1}**",
-                        "description": current_desc.rstrip(),
-                        "color": 0x5865F2,
-                        "timestamp": new_releases[0]["published"] + "T00:00:00.000Z"
-                    }
-                    messages.append(embed)
+                    messages.append({
+                        "text": current_text.rstrip()
+                    })
                     
                     # 새 메시지 시작 (헤더는 첫 번째만)
-                    current_desc = release_line + "\n"
+                    continuation_header = f"🚀 *새로운 릴리스 (계속) - {len(messages)+1}*\n\n"
+                    current_text = continuation_header + release_line + "\n"
                     current_releases = [release_line]
                 else:
-                    current_desc = test_desc
+                    current_text = test_text
                     current_releases.append(release_line)
             
             # 마지막 메시지 추가
             if current_releases:
-                embed = {
-                    "title": header_text if not messages else f"🚀 **새로운 릴리스 (마지막) - {len(messages)+1}**",
-                    "description": current_desc.rstrip(),
-                    "color": 0x5865F2,
-                    "timestamp": new_releases[0]["published"] + "T00:00:00.000Z"
-                }
-                messages.append(embed)
+                if messages:  # 여러 메시지가 있는 경우
+                    final_header = f"🚀 *새로운 릴리스 (마지막) - {len(messages)+1}*\n\n"
+                    current_text = current_text.replace(header_text_full, final_header)
+                messages.append({
+                    "text": current_text.rstrip()
+                })
             
             # 여러 메시지가 있을 경우 총 개수 표시
             if len(messages) > 1:
                 for i, message in enumerate(messages):
                     if i == 0:
-                        message["title"] = f"🚀 **새로운 릴리스 ({len(new_releases)}개) - 1/{len(messages)}**"
-                    else:
-                        message["title"] = f"🚀 **새로운 릴리스 (계속) - {i+1}/{len(messages)}**"
+                        # 첫 번째 메시지의 헤더 업데이트
+                        message["text"] = message["text"].replace(
+                            header_text,
+                            f"🚀 *새로운 릴리스 ({len(new_releases)}개) - 1/{len(messages)}*"
+                        )
+                    # 다른 메시지들은 이미 적절한 헤더가 설정됨
             
-            embeds = messages
-            
-            # 여러 Discord 웹훅 payload 형식
-            payloads = []
-            for i, embed in enumerate(embeds):
-                payload = {
-                    "content": "",
-                    "embeds": [embed]
-                }
-                payloads.append(payload)
+            # 여러 Slack 웹훅 payload 형식
+            payloads = messages
             
             # JSON 배열로 모든 payload 출력 (동적 처리용)
             payloads_json = json.dumps(payloads)
@@ -244,8 +235,7 @@ def main() -> None:
             
             print(f"DEBUG: Generated {len(payloads)} messages")
             for i, payload in enumerate(payloads):
-                print(f"DEBUG: Message {i+1}: {payload['embeds'][0]['title']}")
-                print(f"DEBUG: Description length: {len(payload['embeds'][0]['description'])}")
+                print(f"DEBUG: Message {i+1} text length: {len(payload['text'])}")
             
             # 기존 호환성을 위한 첫 번째 payload
             if payloads:
@@ -254,8 +244,7 @@ def main() -> None:
         else:
             # 테스트를 위해 빈 메시지라도 보내도록 함
             empty_payload = {
-                "content": "테스트: 새로운 릴리스가 없습니다.",
-                "embeds": []
+                "text": "테스트: 새로운 릴리스가 없습니다."
             }
             safe = json.dumps(empty_payload).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             f.write(f"payload={safe}\n")
