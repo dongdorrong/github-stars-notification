@@ -1,6 +1,6 @@
 name: Notify Starred Releases
 on:
-  schedule: [cron: '0 8,13,17 * * *']  # 매일 오전 8시, 오후 1시, 오후 5시에 실행
+  schedule: [cron: '0 23,5,8 * * *']  # 매일 한국시간 08시, 14시, 17시에 실행 (UTC 기준)
   workflow_dispatch:
 
 jobs:
