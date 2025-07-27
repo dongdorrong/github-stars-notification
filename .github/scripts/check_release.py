@@ -22,6 +22,7 @@ from github.GithubException import GithubException  # type: ignore
 # 0. 설정 -------------------------------------------------------------------
 CACHE_PATH = Path(".cache/releases.json")   # 이전 릴리즈 캐시
 REPOS_FILE = Path("repos.txt")              # workflow 앞 단계에서 생성
+LAST_NOTIFICATION_PATH = Path(".cache/last_notification.txt")  # 마지막 알림 시간 저장
 
 token = os.getenv("GH_TOKEN")
 if not token:
@@ -43,7 +44,7 @@ def get_latest_release(repo: str) -> dict | None:
         return {
             "tag_name": latest_release.tag_name,
             "name": latest_release.title,
-            "published_at": latest_release.published_at.strftime("%Y-%m-%d"),
+            "published_at": latest_release.published_at.strftime("%Y-%m-%d %H:%M:%S"),
             "html_url": latest_release.html_url
         }
     except GithubException as e:
@@ -62,6 +63,17 @@ def save_cache(data: dict) -> None:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
+def get_last_notification_time() -> str | None:
+    """마지막 알림 전송 시간을 가져옴"""
+    if LAST_NOTIFICATION_PATH.exists():
+        return LAST_NOTIFICATION_PATH.read_text().strip()
+    return None
+
+def save_last_notification_time(timestamp: str) -> None:
+    """마지막 알림 전송 시간을 저장"""
+    LAST_NOTIFICATION_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LAST_NOTIFICATION_PATH.write_text(timestamp)
+
 def is_first_run() -> bool:
     """캐시 파일의 존재 여부로 첫 실행인지 확인"""
     return not CACHE_PATH.exists()
@@ -79,7 +91,9 @@ def load_config() -> dict:
 
 def format_date(date_str: str) -> str:
     """날짜를 더 읽기 쉬운 형식으로 변환"""
-    return date_str.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
+    # '2025-04-16 14:30:25' -> '25.04.16' (시간 부분은 제거하고 날짜만 표시)
+    date_part = date_str.split(' ')[0]  # 시간 부분 제거
+    return date_part.replace('-', '.')[2:]  # '2025-04-16' -> '25.04.16'
 
 
 
@@ -89,6 +103,9 @@ def main() -> None:
     prev = load_cache()
     current: dict[str, dict] = {}
     new_releases: list[dict] = []
+    
+    # 마지막 알림 시간 가져오기
+    last_notification_time = get_last_notification_time()
 
     for repo in REPOS_FILE.read_text().splitlines():
         repo = repo.strip()
@@ -111,10 +128,8 @@ def main() -> None:
                 "html_url": data["html_url"],
             })
         else:
-            prev_info = prev.get(repo)
-            prev_published = prev_info["published"] if prev_info else None
-            # 날짜 비교: 최신 릴리스가 더 최신이면 알림
-            if (not prev_published) or (published > prev_published):
+            # 마지막 알림 시간 이후에 발행된 릴리즈만 포함
+            if last_notification_time is None or published > last_notification_time:
                 new_releases.append({
                     "repo": repo,
                     "tag": tag,
@@ -133,6 +148,7 @@ def main() -> None:
     # 디버깅 정보 출력
     print(f"DEBUG: Found {len(new_releases)} new releases")
     print(f"DEBUG: First run: {first_run}")
+    print(f"DEBUG: Last notification time: {last_notification_time}")
     if new_releases:
         print("DEBUG: New releases found:")
         for nr in new_releases[:3]:  # 처음 3개만 출력
@@ -143,6 +159,10 @@ def main() -> None:
     with outputs_file.open("a") as f:
         # 새로운 릴리스가 5개 이상일 때만 알림 전송
         if new_releases and len(new_releases) >= 5:
+            # 알림 전송 시간 기록 (가장 최신 릴리즈의 발행 시간으로 설정)
+            latest_release_time = max(nr["published"] for nr in new_releases)
+            save_last_notification_time(latest_release_time)
+            
             # 헤더 텍스트
             if first_run:
                 header_text = "🌟 *스타 저장소의 현재 릴리스 목록입니다*"
@@ -238,6 +258,7 @@ def main() -> None:
             f.write(f"payloads={payloads_json}\n")
             
             print(f"DEBUG: Generated {len(payloads)} messages")
+            print(f"DEBUG: Saved last notification time: {latest_release_time}")
             for i, payload in enumerate(payloads):
                 print(f"DEBUG: Message {i+1} text length: {len(payload['text'])}")
             
