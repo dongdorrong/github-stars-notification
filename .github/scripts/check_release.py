@@ -33,8 +33,8 @@ if not token:
 gh = Github(token)
 
 def normalize_repo_name(repo: str) -> str:
-    """저장소 이름에서 슬래시 주변의 공백을 제거"""
-    return repo.replace(" / ", "/")
+    """저장소 이름에서 불필요한 공백을 제거"""
+    return repo.strip().replace(" / ", "/")
 
 def get_latest_release(repo: str) -> dict | None:
     """저장소의 최신 릴리즈 정보를 가져옴"""
@@ -82,10 +82,17 @@ def load_config() -> dict:
     """설정 파일 로드"""
     config_path = Path("config.yaml")
     if config_path.exists():
-        data = yaml.safe_load(config_path.read_text())
+        raw = config_path.read_text()
+        if not raw.strip():
+            return {"special_projects": []}
+        data = yaml.safe_load(raw) or {}
         # 프로젝트 이름 정규화
         if "special_projects" in data:
-            data["special_projects"] = [normalize_repo_name(repo) for repo in data["special_projects"]]
+            data["special_projects"] = [
+                normalize_repo_name(repo) for repo in data.get("special_projects", [])
+            ]
+        else:
+            data["special_projects"] = []
         return data
     return {"special_projects": []}
 
