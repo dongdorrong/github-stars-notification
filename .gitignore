@@ -1,0 +1,14 @@
+# Runtime artifacts
+.cache/
+repos.txt
+github-output.txt
+release-feed.json
+
+# Local secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/

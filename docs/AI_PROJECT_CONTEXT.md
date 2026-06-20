@@ -4,26 +4,31 @@
 
 ## 1. 프로젝트 한 줄 요약
 
-이 프로젝트는 사용자가 GitHub에서 star한 저장소 목록을 조회하고, 각 저장소의 최신 GitHub Release를 감지해 Slack으로 알림을 보내는 GitHub Actions 자동화 repo다.
+GitHub에서 star한 저장소 목록을 조회하고, 각 저장소의 최신 GitHub Release 변화를 감지해 정책에 맞으면 Slack으로 알림을 보내며, 다른 앱/로컬 LLM이 재사용할 수 있는 deterministic release feed를 남기는 자동화 repo다.
 
 ## 2. 현재 목적
 
 - GitHub starred repositories의 release 변화를 주기적으로 확인한다.
-- 새 release가 감지되면 Slack으로 사람이 읽기 쉬운 메시지를 보낸다.
-- `config.yaml`에 등록한 관심 프로젝트는 Slack 메시지에서 `⭐`로 강조한다.
-- 향후 다른 프로젝트/애플리케이션과 연동해 release feed, 관심 프로젝트 관리, 알림 채널 확장 같은 기능으로 발전시킬 수 있다.
+- `.cache/releases.json`과 비교해 중복 알림을 막는다.
+- 새 release가 `config.yaml`의 정책을 만족하면 Slack으로 사람이 읽기 쉬운 메시지를 보낸다.
+- `config.yaml`에 등록한 관심 프로젝트는 Slack 메시지에서 `⭐`로 강조하고, 정책상 5개 미만이어도 바로 알릴 수 있다.
+- `.cache/release-feed.json`을 생성해 향후 다른 프로젝트/애플리케이션, SQLite/PostgreSQL, 로컬 LLM 요약 파이프라인으로 확장할 수 있게 한다.
 
 ## 3. Repo 구조
 
 ```text
 /home/dongdorrong/github/private/github-stars-notification/
+├── .gitignore
 ├── AGENTS.md
 ├── README.md
 ├── config.yaml
 ├── docs/
-│   └── AI_PROJECT_CONTEXT.md
+│   ├── AI_PROJECT_CONTEXT.md
+│   └── GITHUB_MCP_LOCAL_LLM.md
 ├── images/
 │   └── sample.png
+├── tests/
+│   └── test_check_release.py
 └── .github/
     ├── scripts/
     │   ├── check_release.py
@@ -36,12 +41,16 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| `README.md` | 사용자용 프로젝트 설명, secret 설정, Slack 알림 형식 설명 |
-| `config.yaml` | 관심 프로젝트 목록. `special_projects`에 repo 이름을 등록 |
-| `.github/workflows/notify-starred-releases.yml` | GitHub Actions 실행 트리거, dependency 설치, star 목록 조회, release 감지, Slack 전송, cache 저장 |
-| `.github/scripts/check_release.py` | `repos.txt`를 읽고 latest release를 조회해 새 release Slack payload를 생성 |
+| `README.md` | 사용자용 프로젝트 설명, secrets 설정, 정책, 로컬 테스트, feed/LLM 연결 설명 |
+| `AGENTS.md` | repo-local AI 작업 원칙과 안전 경계 |
+| `config.yaml` | 관심 프로젝트, 알림 정책, feed 경로, LLM 역할 경계 설정 |
+| `docs/AI_PROJECT_CONTEXT.md` | 다른 세션/레포 연동용 handoff 문서 |
+| `docs/GITHUB_MCP_LOCAL_LLM.md` | GitHub MCP + 로컬 LLM 연동 결론과 안전 경계 |
+| `.github/workflows/notify-starred-releases.yml` | GitHub Actions 실행 트리거, dependency 설치, star 목록 조회, release 감지, Slack 전송, feed artifact 업로드 |
+| `.github/scripts/check_release.py` | release 조회, cache 비교, 알림 정책 판단, Slack payload 및 release feed 생성 |
 | `.github/scripts/requirements.txt` | `PyYAML`, `requests`, `PyGithub` 버전 pin |
-| `images/sample.png` | README용 알림 예시 이미지 |
+| `tests/test_check_release.py` | token 없이 핵심 정책/캐시/feed 동작을 검증하는 unittest |
+| `.gitignore` | `.cache/`, `repos.txt`, `.env`, Python runtime artifact 제외 |
 
 ## 5. Workflow 실제 흐름
 
@@ -49,26 +58,26 @@
 
 ```yaml
 on:
-  schedule: [cron: '0 9 * * 1']
+  schedule: [cron: '0 23,5,8 * * *']
   workflow_dispatch:
 ```
 
 주의:
 
 - cron은 GitHub Actions 기준 UTC다.
-- 현재 값은 **매주 월요일 09:00 UTC** 실행이다.
-- README에는 “매일 오전 9시 자동 체크”라고 되어 있어 현재 workflow와 설명이 다르다. 다음 수정 시 둘 중 하나를 맞춰야 한다.
+- 현재 값은 **매일 한국시간 08:00, 14:00, 17:00** 실행이다.
 
 실행 단계:
 
 1. `actions/checkout@v4`
 2. `actions/setup-python@v5` with `python-version: '3.x'`
 3. `.github/scripts/requirements.txt` 설치
-4. `.cache` restore
+4. `.cache` restore/save 준비 (`actions/cache@v4`, run별 key + restore prefix)
 5. `gh api /user/starred --paginate | jq -r '.[].full_name' > repos.txt`
 6. `python .github/scripts/check_release.py`
-7. `steps.detect.outputs.has_new == 'true'`면 Slack 전송
-8. `.cache` save
+7. `.cache/release-feed.json`을 `release-feed` artifact로 업로드
+8. GitHub Step Summary에 결과 요약
+9. `steps.detect.outputs.has_new == 'true'`면 `curl`로 `SLACK_WEBHOOK_URL`에 Slack payload 전송
 
 ## 6. Script 동작 상세
 
@@ -76,43 +85,55 @@ on:
 
 입력:
 
-- `GH_TOKEN`: GitHub API token
-- `GITHUB_OUTPUT`: GitHub Actions output file path
+- `GH_TOKEN`: GitHub API token. fixture 테스트가 아니면 필수
+- `GITHUB_OUTPUT`: GitHub Actions output file path. 로컬에서는 `--github-output`로 대체 가능
 - `repos.txt`: workflow의 “List starred repos” step에서 생성
-- `config.yaml`: 관심 프로젝트 목록
+- `config.yaml`: 관심 프로젝트/알림/feed/LLM 설정
 - `.cache/releases.json`: 이전 release state cache
+- 선택: `--fixture-releases <json>`으로 token 없는 로컬 테스트 가능
 
 출력:
 
-- `has_new=true|false`
-- `payload=<Slack payload json escaped for GitHub Actions output>`
+- GitHub Actions outputs
+  - `has_new=true|false`
+  - `payloads=<Slack payload json array>`
+  - `message_count=<count>`
+  - `feed_path=<path>`
+  - `release_count=<count>`
+  - `special_release_count=<count>`
+  - `notify_reason=<reason>`
 - `.cache/releases.json` 갱신
+- `.cache/release-feed.json` 생성
+- 알림을 보낸 경우 `.cache/last_notification.txt` 갱신
 
-주요 함수:
+주요 함수/개념:
 
-| 함수 | 역할 |
+| 함수/개념 | 역할 |
 | --- | --- |
 | `normalize_repo_name` | `owner / repo`를 `owner/repo`로 normalize |
-| `get_latest_release` | PyGithub로 latest release 조회. 404면 release 없음으로 처리 |
-| `load_cache` / `save_cache` | `.cache/releases.json` 읽기/쓰기 |
-| `is_first_run` | cache 파일이 없으면 첫 실행으로 판단 |
-| `load_config` | `config.yaml` 로드 및 special project normalize |
-| `format_release_info` | Slack block section 생성 |
+| `load_config` | `config.yaml` 로드, 기본값 merge, 정책값 normalize |
+| `get_github_release_fetcher` | PyGithub 기반 live release fetcher 생성 |
+| `load_fixture_fetcher` | JSON fixture 기반 token-free fetcher 생성 |
+| `detect_releases` | 현재 latest release를 cache와 비교해 새 release만 추림 |
+| `decide_notification` | `min_release_count`, `special_project_always_notify`, `first_run_notify` 정책 적용 |
+| `build_slack_payloads` | Slack text payload 생성 및 길이 기준 분할 |
+| `build_release_feed` | 앱/로컬 LLM 연동용 deterministic JSON feed 생성 |
 
 첫 실행 동작:
 
-- `.cache/releases.json`이 없으면 `first_run=True`
-- 이때는 latest release가 있는 모든 starred repo가 `new_releases`에 포함된다.
-- Slack header는 `🌟 *스타 저장소의 현재 릴리스 목록입니다*`가 된다.
+- `.cache/releases.json`이 없으면 `first_run=True`.
+- latest release가 있는 모든 starred repo가 새 release 후보가 된다.
+- `notification.first_run_notify=false`이면 캐시와 feed만 만들고 Slack은 보내지 않는다.
+- 기본값은 기존 동작과 맞춰 `first_run_notify=true`다.
 
-일반 실행 동작:
+중복 방지:
 
-- 이전 cache의 `published` 날짜보다 latest release 날짜가 더 최신이면 새 release로 판단한다.
-- release는 `published` 기준 최신순 정렬된다.
+- 일반 실행에서는 repo별 이전 `tag` 또는 `published`가 달라진 경우만 새 release로 본다.
+- 새 릴리스가 임계값 미만이라 Slack을 보내지 않아도 cache는 갱신되므로, 같은 release가 다음 실행에서 반복 알림 후보가 되지 않는다.
 
 ## 7. 현재 설정 파일
 
-`config.yaml`에는 다음 관심 프로젝트가 있다.
+`config.yaml`의 핵심 설정:
 
 ```yaml
 special_projects:
@@ -124,9 +145,21 @@ special_projects:
   - "aws / amazon-vpc-cni-k8s"
   - "etcd-io / etcd"
   - "istio / istio"
-```
 
-표기 공백은 script에서 normalize된다.
+notification:
+  min_release_count: 5
+  special_project_always_notify: true
+  first_run_notify: true
+  max_slack_text_length: 35000
+
+feed:
+  output_path: ".cache/release-feed.json"
+
+llm:
+  enabled: false
+  provider: "local"
+  role: "summarize_and_prioritize_only"
+```
 
 ## 8. Secrets / 인증 경계
 
@@ -135,63 +168,50 @@ special_projects:
 | Secret | 용도 |
 | --- | --- |
 | `GH_PAT` | `gh api /user/starred` 및 PyGithub API 호출 |
-| `SLACK_WEBHOOK` | Slack Incoming Webhook URL |
+| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL |
 
 주의:
 
 - 실제 token/webhook 값은 절대 repo에 커밋하지 않는다.
+- `.env`가 필요하면 `.gitignore`에 의해 제외된다. 그래도 shell history와 파일 권한에 주의한다.
 - 다른 레포지토리와 연동할 때도 secret은 각 실행 환경의 secret store를 사용한다.
-- 로컬 테스트용 `.env`가 필요하면 `.gitignore` 추가 후 사용해야 한다. 현재 repo에는 `.env`/`.gitignore`가 없다.
 
-## 9. 알려진 주의점 / 개선 후보
+## 9. GitHub MCP + 로컬 LLM 결론
 
-아래는 현재 코드/문서에서 확인되는 주의점이다. 바로 수정하라는 의미가 아니라, 다음 세션이 오해하지 않도록 남긴다.
+이 프로젝트는 GitHub MCP와 로컬 LLM을 붙이기 좋은 구조지만, 역할을 분리해야 안전하다.
 
-1. **README와 workflow schedule 불일치**
-   - README: 매일 오전 9시
-   - workflow: `0 9 * * 1` = 매주 월요일 09:00 UTC
+- GitHub MCP: starred repositories, repo metadata, workflow/release context를 읽는 선택적 수집면
+- Python: cache/state/duplicate detection/notification policy의 source of truth
+- Local LLM: release feed를 읽고 요약/분류/우선순위/문장 다듬기만 수행
 
-2. **GitHub Actions cache key가 고정값**
-   - restore/save key가 `${{ runner.os }}-releases-cache`로 고정되어 있다.
-   - GitHub Actions cache는 key 처리 방식이 중요하므로, cache가 실제로 매 실행 최신 상태로 유지되는지 workflow run에서 확인해야 한다.
-
-3. **첫 실행 시 알림량이 많을 수 있음**
-   - cache가 없으면 release가 있는 모든 starred repo가 Slack에 전송된다.
-   - 연동 앱으로 확장할 때는 first-run bootstrap과 notification을 분리하는 것이 안전할 수 있다.
-
-4. **latest release 기준만 사용**
-   - pre-release, draft release, tag-only release 정책은 명시되어 있지 않다.
-   - PyGithub `get_latest_release()`가 반환하는 기준에 의존한다.
-
-5. **테스트 구조 없음**
-   - 현재 fixture/unit test가 없다.
-   - script 수정이 커지면 GitHub API를 mock한 test가 필요하다.
+구체 설계와 로컬 Docker 예시는 `docs/GITHUB_MCP_LOCAL_LLM.md`에 있다.
 
 ## 10. 다른 레포지토리/애플리케이션과 연동할 때의 경계
 
-이 프로젝트를 다른 앱과 연결할 때 권장 경계:
-
 ### 읽기 source
 
-- starred repo 목록: GitHub API `/user/starred`
-- latest release: GitHub Releases API via PyGithub
-- 관심 프로젝트: `config.yaml`
-- 이전 상태: `.cache/releases.json` 또는 향후 DB/state store
+- starred repo 목록: 현재 GitHub CLI `gh api /user/starred`, 향후 GitHub MCP `list_starred_repositories` 가능
+- latest release: 현재 PyGithub `get_latest_release()`
+- 관심 프로젝트/정책: `config.yaml`
+- 이전 상태: `.cache/releases.json`, 향후 SQLite/PostgreSQL event store 가능
+- release feed: `.cache/release-feed.json`
 
 ### 쓰기 output
 
 - 현재: Slack webhook
+- 현재: GitHub Actions artifact `release-feed`
 - 향후 후보:
   - SQLite/PostgreSQL release history table
   - 웹 UI/API용 release feed
   - Discord/Email/Notion/Velog 등 추가 채널
+  - LLM 요약 결과 저장소(`llm_summary` 등 별도 필드/테이블)
 
 ### 권장 확장 방향
 
-- `check_release.py`의 release detection 로직과 Slack formatting 로직을 분리한다.
-- release state를 `.cache/releases.json`만이 아니라 DB에도 저장할 수 있게 adapter를 둔다.
-- Slack output은 notifier adapter로 분리한다.
-- 관심 프로젝트는 YAML 파일뿐 아니라 DB/API에서 관리할 수 있게 확장한다.
+- release event 원본과 LLM 요약 결과를 분리한다.
+- Slack output은 notifier adapter로 더 분리할 수 있다.
+- 관심 프로젝트는 YAML 파일뿐 아니라 DB/API에서 관리할 수 있게 확장할 수 있다.
+- cache file이 커지거나 여러 앱이 동시에 읽게 되면 SQLite/PostgreSQL로 state store를 옮긴다.
 
 ## 11. 로컬 검증 명령
 
@@ -202,10 +222,38 @@ cd /home/dongdorrong/github/private/github-stars-notification
 python3 -m py_compile .github/scripts/check_release.py
 ```
 
-dependency 설치 검증이 필요하면, 네트워크 접근이 가능한 환경에서:
+단위 테스트:
 
 ```bash
-python3 -m pip install -r .github/scripts/requirements.txt
+python3 -m unittest discover -s tests -v
+```
+
+fixture smoke test:
+
+```bash
+cat > /tmp/repos.txt <<'EOF'
+grafana / grafana
+other/repo
+EOF
+
+cat > /tmp/releases.json <<'EOF'
+{
+  "grafana/grafana": {
+    "tag_name": "v12.0.0",
+    "name": "Release v12.0.0",
+    "published_at": "2026-06-20 10:00:00",
+    "html_url": "https://github.com/grafana/grafana/releases/tag/v12.0.0"
+  }
+}
+EOF
+
+python3 .github/scripts/check_release.py \
+  --repos-file /tmp/repos.txt \
+  --fixture-releases /tmp/releases.json \
+  --cache-path /tmp/releases-cache.json \
+  --feed-path /tmp/release-feed.json \
+  --github-output /tmp/github-output.txt \
+  --no-sleep
 ```
 
 실제 script 실행에는 아래가 필요하다.
@@ -214,10 +262,8 @@ python3 -m pip install -r .github/scripts/requirements.txt
 export GH_TOKEN=...
 export GITHUB_OUTPUT=/tmp/github-output.txt
 gh api /user/starred --paginate | jq -r '.[].full_name' > repos.txt
-python .github/scripts/check_release.py
+python3 .github/scripts/check_release.py
 ```
-
-단, 로컬에서 실제 token을 사용할 때는 shell history/secrets 노출에 주의한다.
 
 ## 12. 다음 세션에서 먼저 할 일
 
@@ -227,13 +273,15 @@ python .github/scripts/check_release.py
 cd /home/dongdorrong/github/private/github-stars-notification
 git status --short --branch
 sed -n '1,220p' AGENTS.md
-sed -n '1,280p' docs/AI_PROJECT_CONTEXT.md
+sed -n '1,320p' docs/AI_PROJECT_CONTEXT.md
+sed -n '1,260p' docs/GITHUB_MCP_LOCAL_LLM.md
 python3 -m py_compile .github/scripts/check_release.py
+python3 -m unittest discover -s tests -v
 ```
 
 workflow를 바꾸는 작업이면 추가로:
 
 ```bash
 sed -n '1,240p' .github/workflows/notify-starred-releases.yml
-sed -n '1,220p' .github/scripts/check_release.py
+sed -n '1,360p' .github/scripts/check_release.py
 ```

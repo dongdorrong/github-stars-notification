@@ -5,8 +5,8 @@
 [![Workflow Status](https://github.com/dongdorrong/github-stars-notification/actions/workflows/notify-starred-releases.yml/badge.svg)](https://github.com/dongdorrong/github-stars-notification/actions)
 [![GitHub stars](https://img.shields.io/github/stars/dongdorrong/github-stars-notification?style=social)](https://github.com/dongdorrong/github-stars-notification)
 
-GitHub에서 스타를 준 저장소의 새로운 릴리스를 자동으로 감지하여 <br>
-Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
+GitHub에서 스타를 준 저장소의 새로운 릴리스를 감지하고, <br>
+정책에 맞는 경우 Slack으로 알려주는 GitHub Actions 자동화입니다. ✨
 
 </div>
 
@@ -16,15 +16,17 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 
 - Repo-local agent guidance: [`AGENTS.md`](AGENTS.md)
 - Project handoff/context: [`docs/AI_PROJECT_CONTEXT.md`](docs/AI_PROJECT_CONTEXT.md)
+- GitHub MCP + 로컬 LLM 연동 설계: [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)
 
 ## 🎯 기능
 
 - 🔍 GitHub 스타 저장소의 최신 릴리스 자동 감지
-- ⏰ 하루 3번 자동 체크 (오전 8시, 오후 1시, 오후 5시 - 새로운 릴리스 5개 이상일 때만 알림)
-- 💬 Slack을 통한 새로운 릴리스 알림 (최신순 정렬)
-- 💾 릴리스 정보 캐싱으로 중복 알림 방지
-- ⭐ 관심 프로젝트 강조 표시
-- 📝 스마트 알림: 임계값 기반 메시지 전송
+- ⏰ 하루 3번 자동 체크: 한국시간 08시, 14시, 17시 (`0 23,5,8 * * *` UTC)
+- 💾 `.cache/releases.json` 기반 중복 알림 방지
+- 💬 Slack Incoming Webhook 알림
+- ⭐ 관심 프로젝트 강조 및 즉시 알림 정책
+- 🧾 다른 앱/로컬 LLM이 읽을 수 있는 `.cache/release-feed.json` 생성
+- 🧪 token 없이 fixture로 로컬 테스트 가능
 
 <div align="center">
 
@@ -35,69 +37,146 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 ## ⚙️ 설정 방법
 
 ### 1️⃣ GitHub Personal Access Token (PAT) 생성
+
 ```bash
-✓ repo:read 권한 필요
-✓ Repository Secrets에 GH_PAT로 저장
+# Repository Secrets에 GH_PAT로 저장
+# starred repo와 release 조회가 가능한 읽기 권한을 사용
 ```
 
 ### 2️⃣ Slack Webhook URL 설정
+
 ```bash
-✓ Slack 워크스페이스에서 Incoming Webhook 생성
-✓ Repository Secrets에 SLACK_WEBHOOK_URL로 저장
+# Slack 워크스페이스에서 Incoming Webhook 생성
+# Repository Secrets에 SLACK_WEBHOOK_URL로 저장
 ```
 
-### 3️⃣ 관심 프로젝트 설정 (선택사항)
-특별히 관심있는 프로젝트는 `config.yaml` 파일에 추가할 수 있습니다:
+### 3️⃣ 관심 프로젝트와 알림 정책 설정
+
+`config.yaml`에서 관심 프로젝트와 정책을 관리합니다.
+
 ```yaml
-# 특별히 관심있는 프로젝트 목록
 special_projects:
   - "kubernetes / kubernetes"
-  - "elastic / elasticsearch"
-  - "grafana / grafana"
+  - "grafana/grafana"
+
+notification:
+  min_release_count: 5
+  special_project_always_notify: true
+  first_run_notify: true
+  max_slack_text_length: 35000
+
+feed:
+  output_path: ".cache/release-feed.json"
+
+llm:
+  enabled: false
+  provider: "local"
+  role: "summarize_and_prioritize_only"
 ```
-GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으면 됩니다.
+
+정책 의미:
+
+| 설정 | 의미 |
+| --- | --- |
+| `min_release_count` | 일반 릴리스가 이 개수 이상 모이면 Slack 알림 |
+| `special_project_always_notify` | 관심 프로젝트 릴리스는 임계값 미만이어도 알림 |
+| `first_run_notify` | 캐시가 없는 첫 실행에서 현재 릴리스 목록을 알림으로 보낼지 여부 |
+| `feed.output_path` | 앱/로컬 LLM 연동용 deterministic JSON feed 경로 |
 
 ## 📬 알림 형식
 
-새로운 릴리스가 감지되면 다음과 같은 형식으로 Slack 메시지가 전송됩니다:
+새로운 릴리스가 정책을 만족하면 Slack 메시지가 전송됩니다.
 
-### 메시지 구성
-1. 헤더
-   ```
-   🚀 새로운 릴리스를 확인했습니다
-   ```
+```text
+🚀 새로운 릴리스 5개를 확인했습니다
 
-2. 가이드 메시지
-   ```
-   💡 중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!
-   • config.yaml 파일에 프로젝트를 추가하면 ⭐ 로 강조 표시됩니다
-   • GitHub에서 프로젝트 이름을 복사해서 그대로 붙여넣으시면 됩니다
-   ```
+💡 중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!
+• config.yaml의 special_projects에 등록하면 ⭐ 로 강조됩니다
+• notification 정책으로 임계값과 첫 실행 동작을 조정할 수 있습니다
 
-3. 프로젝트 목록
-   ```
-   [일반 프로젝트]
-   *organization* / *repository* v1.2.3 - Release Name 25.04.16
+---
 
-   [관심 프로젝트]
-   ⭐ *organization* / *repository* v1.2.3 - Release Name 25.04.16
-   ```
+⭐ *grafana* / *grafana* <release-url|`v12.0.0`> - 26.06.20
+*kubernetes* / *kubernetes* <release-url|`v1.34.0`> - 26.06.20
+```
 
-### 표시 항목
-- 저장소 이름 (`*organization* / *repository*` 형식)
-- 릴리스 태그 (클릭 가능한 링크)
-- 릴리스 이름 (태그와 다른 경우, 이탤릭체)
-- 발행 날짜 (YY.MM.DD)
+표시 항목:
 
-### 특별 표시
-- ⭐ : 관심 프로젝트 (config.yaml에 등록된 프로젝트)
+- 저장소 이름 (`*organization* / *repository*`)
+- 릴리스 태그 링크
+- 릴리스 이름(태그와 다를 때만)
+- 발행 날짜 (`YY.MM.DD`)
+- 관심 프로젝트 `⭐`
 
-## 🚀 수동 실행
+## 🧾 Release feed / 로컬 LLM 연동
 
-워크플로우는 GitHub Actions 탭에서 `Run workflow` 버튼을 통해 수동으로도 실행할 수 있습니다.
+`check_release.py`는 Slack 전송 여부와 무관하게 `.cache/release-feed.json`을 생성합니다. 이 파일은 다른 로컬 앱이나 로컬 LLM이 읽는 안전한 연결 지점입니다.
+
+원칙:
+
+- Python이 새 릴리스/중복/알림 여부를 결정합니다.
+- 로컬 LLM은 요약, 분류, 중요도 초안만 작성합니다.
+- GitHub MCP를 붙이더라도 읽기 전용 수집면으로 사용합니다.
+
+자세한 설계는 [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)를 봅니다.
+
+## 🚀 실행
+
+### GitHub Actions
+
+워크플로우는 schedule 또는 Actions 탭의 `Run workflow`로 실행됩니다.
+
+### 로컬 fixture 테스트
+
+실제 GitHub token 없이 동작을 확인할 수 있습니다.
+
+```bash
+cat > /tmp/repos.txt <<'EOF'
+grafana / grafana
+other/repo
+EOF
+
+cat > /tmp/releases.json <<'EOF'
+{
+  "grafana/grafana": {
+    "tag_name": "v12.0.0",
+    "name": "Release v12.0.0",
+    "published_at": "2026-06-20 10:00:00",
+    "html_url": "https://github.com/grafana/grafana/releases/tag/v12.0.0"
+  }
+}
+EOF
+
+python3 .github/scripts/check_release.py \
+  --repos-file /tmp/repos.txt \
+  --fixture-releases /tmp/releases.json \
+  --cache-path /tmp/releases-cache.json \
+  --feed-path /tmp/release-feed.json \
+  --github-output /tmp/github-output.txt \
+  --no-sleep
+```
+
+### 실제 로컬 실행
+
+```bash
+export GH_TOKEN=...
+export GITHUB_OUTPUT=/tmp/github-output.txt
+
+gh api /user/starred --paginate | jq -r '.[].full_name' > repos.txt
+python3 .github/scripts/check_release.py
+```
+
+토큰과 webhook은 shell history, `.env`, Git 커밋에 남기지 않습니다.
+
+## ✅ 검증
+
+```bash
+python3 -m py_compile .github/scripts/check_release.py
+python3 -m unittest discover -s tests -v
+```
 
 ---
 
 <div align="center">
 Made with ❤️ by <a href="https://github.com/dongdorrong">dongdorrong</a>
-</div> 
+</div>

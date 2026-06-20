@@ -10,6 +10,10 @@ jobs:
       has_new: ${{ steps.detect.outputs.has_new }}
       payloads: ${{ steps.detect.outputs.payloads }}
       message_count: ${{ steps.detect.outputs.message_count }}
+      feed_path: ${{ steps.detect.outputs.feed_path }}
+      release_count: ${{ steps.detect.outputs.release_count }}
+      special_release_count: ${{ steps.detect.outputs.special_release_count }}
+      notify_reason: ${{ steps.detect.outputs.notify_reason }}
     steps:
       - uses: actions/checkout@v4
       
@@ -45,6 +49,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
+      - name: Upload deterministic release feed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-feed
+          path: ${{ steps.detect.outputs.feed_path || '.cache/release-feed.json' }}
+          if-no-files-found: ignore
+
+      - name: Summarize detection
+        if: always()
+        run: |
+          {
+            echo "## GitHub starred release check"
+            echo "- notify: ${{ steps.detect.outputs.has_new }}"
+            echo "- reason: ${{ steps.detect.outputs.notify_reason }}"
+            echo "- releases: ${{ steps.detect.outputs.release_count }}"
+            echo "- special releases: ${{ steps.detect.outputs.special_release_count }}"
+            echo "- feed: ${{ steps.detect.outputs.feed_path }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   notify:
     needs: check
     if: needs.check.outputs.has_new == 'true'
@@ -76,5 +100,3 @@ jobs:
             ${{ secrets.SLACK_WEBHOOK_URL }}
           
           echo "메시지 전송 완료"
-
- 

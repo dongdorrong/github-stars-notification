@@ -1,5 +1,5 @@
-# 특별히 관심있는 프로젝트 목록
-# description: 프로젝트에 대한 간단한 설명 (optional)
+# 관심 프로젝트와 알림 정책.
+# repo 표기는 `owner/repo` 또는 `owner / repo` 모두 허용되며 스크립트가 normalize한다.
 
 special_projects:
   - "kubernetes / kubernetes"
@@ -10,3 +10,23 @@ special_projects:
   - "aws / amazon-vpc-cni-k8s"
   - "etcd-io / etcd"
   - "istio / istio"
+
+notification:
+  # 기본은 릴리스가 5개 이상 모였을 때 Slack으로 보낸다.
+  min_release_count: 5
+  # 관심 프로젝트 릴리스는 5개 미만이어도 바로 보낸다.
+  special_project_always_notify: true
+  # 캐시가 없는 첫 실행에서 현재 릴리스 목록을 bootstrap 알림으로 보낼지 여부.
+  first_run_notify: true
+  # Slack text 제한(40,000자)보다 여유 있게 분할한다.
+  max_slack_text_length: 35000
+
+feed:
+  # 다른 앱/로컬 LLM이 읽는 deterministic release feed.
+  output_path: ".cache/release-feed.json"
+
+llm:
+  # LLM은 요약/분류/우선순위 초안만 맡고, 중복 판단/상태 변경/전송 판단은 하지 않는다.
+  enabled: false
+  provider: "local"
+  role: "summarize_and_prioritize_only"
