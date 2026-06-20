@@ -10,6 +10,13 @@ Slack으로 알림을 보내주는 GitHub Actions 워크플로우입니다. ✨
 
 </div>
 
+## 🤖 AI/OMX 세션 컨텍스트
+
+다른 OMX/Codex 세션에서 이 저장소를 작업할 때는 아래 문서를 먼저 읽습니다.
+
+- Repo-local agent guidance: [`AGENTS.md`](AGENTS.md)
+- Project handoff/context: [`docs/AI_PROJECT_CONTEXT.md`](docs/AI_PROJECT_CONTEXT.md)
+
 ## 🎯 기능
 
 - 🔍 GitHub 스타 저장소의 최신 릴리스 자동 감지
