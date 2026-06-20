@@ -19,6 +19,7 @@
 | 관심 프로젝트/알림 정책 설정 | `config.yaml` |
 | 상세 handoff 문서 | `docs/AI_PROJECT_CONTEXT.md` |
 | GitHub MCP + 로컬 LLM 설계 | `docs/GITHUB_MCP_LOCAL_LLM.md` |
+| 보안 레이어 후속 조치 | `docs/SECURITY_LAYERING_NOTES.md` |
 | 테스트 | `tests/test_check_release.py` |
 
 ## 현재 동작 요약
@@ -66,3 +67,4 @@
 
 - 전체 프로젝트 컨텍스트: `docs/AI_PROJECT_CONTEXT.md`
 - GitHub MCP + 로컬 LLM 설계: `docs/GITHUB_MCP_LOCAL_LLM.md`
+- 보안 레이어 후속 조치: `docs/SECURITY_LAYERING_NOTES.md`

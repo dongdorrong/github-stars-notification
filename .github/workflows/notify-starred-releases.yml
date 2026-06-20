@@ -78,6 +78,12 @@ jobs:
         include: ${{ fromJSON(needs.check.outputs.payloads || '[{}]') }}
     steps:
       - name: Send Slack Message
+        env:
+          # SECURITY: release title/name/url은 외부 저장소 관리자가 제어할 수 있다.
+          # GitHub expression을 inline shell 문자열에 직접 넣으면 quote-break injection이 가능하므로
+          # 반드시 env로 전달하고 run 블록에서는 double-quoted shell variable만 사용한다.
+          SLACK_PAYLOAD: ${{ toJSON(matrix) }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           echo "Slack 메시지 전송 중..."
           
@@ -91,12 +97,9 @@ jobs:
           
           echo "Payload 전송 중..."
           # check_release.py에서 이미 Slack 형식으로 준비된 데이터를 그대로 사용
-          SLACK_PAYLOAD='${{ toJSON(matrix) }}'
-          
-          # Slack 웹훅으로 전송
-          echo "$SLACK_PAYLOAD" | curl -X POST \
+          printf '%s' "$SLACK_PAYLOAD" | curl --fail --show-error --silent -X POST \
             -H "Content-Type: application/json" \
             -d @- \
-            ${{ secrets.SLACK_WEBHOOK_URL }}
+            "$SLACK_WEBHOOK_URL"
           
           echo "메시지 전송 완료"

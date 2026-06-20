@@ -17,6 +17,7 @@ GitHub에서 스타를 준 저장소의 새로운 릴리스를 감지하고, <br
 - Repo-local agent guidance: [`AGENTS.md`](AGENTS.md)
 - Project handoff/context: [`docs/AI_PROJECT_CONTEXT.md`](docs/AI_PROJECT_CONTEXT.md)
 - GitHub MCP + 로컬 LLM 연동 설계: [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)
+- 보안 레이어 후속 조치: [`docs/SECURITY_LAYERING_NOTES.md`](docs/SECURITY_LAYERING_NOTES.md)
 
 ## 🎯 기능
 

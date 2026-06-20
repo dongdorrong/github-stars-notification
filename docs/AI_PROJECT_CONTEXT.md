@@ -46,9 +46,10 @@ GitHub에서 star한 저장소 목록을 조회하고, 각 저장소의 최신 G
 | `config.yaml` | 관심 프로젝트, 알림 정책, feed 경로, LLM 역할 경계 설정 |
 | `docs/AI_PROJECT_CONTEXT.md` | 다른 세션/레포 연동용 handoff 문서 |
 | `docs/GITHUB_MCP_LOCAL_LLM.md` | GitHub MCP + 로컬 LLM 연동 결론과 안전 경계 |
+| `docs/SECURITY_LAYERING_NOTES.md` | 치명 보안 조치 결과와 레이어별 후속 작업 코멘트 |
 | `.github/workflows/notify-starred-releases.yml` | GitHub Actions 실행 트리거, dependency 설치, star 목록 조회, release 감지, Slack 전송, feed artifact 업로드 |
 | `.github/scripts/check_release.py` | release 조회, cache 비교, 알림 정책 판단, Slack payload 및 release feed 생성 |
-| `.github/scripts/requirements.txt` | `PyYAML`, `requests`, `PyGithub` 버전 pin |
+| `.github/scripts/requirements.txt` | `PyYAML`, `PyGithub` 버전 pin. `requests`는 직접 사용하지 않아 제거됨 |
 | `tests/test_check_release.py` | token 없이 핵심 정책/캐시/feed 동작을 검증하는 unittest |
 | `.gitignore` | `.cache/`, `repos.txt`, `.env`, Python runtime artifact 제외 |
 
@@ -275,6 +276,7 @@ git status --short --branch
 sed -n '1,220p' AGENTS.md
 sed -n '1,320p' docs/AI_PROJECT_CONTEXT.md
 sed -n '1,260p' docs/GITHUB_MCP_LOCAL_LLM.md
+sed -n '1,220p' docs/SECURITY_LAYERING_NOTES.md
 python3 -m py_compile .github/scripts/check_release.py
 python3 -m unittest discover -s tests -v
 ```
