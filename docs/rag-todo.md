@@ -71,29 +71,29 @@ release 문서 예시:
 
 ### P1 — read-only export 추가
 
-- [ ] JSONL export 명령을 추가한다.
+- [x] JSONL export 명령을 추가한다. — `scripts/export_knowledge_jsonl.py`
   - [ ] `python .github/scripts/check_release.py export-knowledge --format jsonl`
-  - [ ] 또는 별도 `scripts/export_knowledge_jsonl.py`
-- [ ] export는 기존 cache/feed를 읽기만 하고 GitHub API 호출 여부를 옵션으로 분리한다.
-  - [ ] `--from-cache`
+  - [x] 또는 별도 `scripts/export_knowledge_jsonl.py`
+- [x] export는 기존 cache/feed를 읽기만 하고 GitHub API 호출 여부를 옵션으로 분리한다.
+  - [x] `--from-cache` — 기본 동작이 cache/feed only
   - [ ] `--refresh`는 명시 호출 시에만
-- [ ] export 필드:
-  - [ ] `source_id`
-  - [ ] `document_id`
-  - [ ] `title`
-  - [ ] `body`
-  - [ ] `content_hash`
-  - [ ] `uri`
-  - [ ] `visibility`
-  - [ ] `created_at`
-  - [ ] `updated_at`
-  - [ ] `metadata.owner`
-  - [ ] `metadata.repo`
-  - [ ] `metadata.tag_name`
-  - [ ] `metadata.published_at`
-  - [ ] `metadata.is_special`
-  - [ ] `metadata.notify_reason`
-- [ ] Slack formatting과 Knowledge export formatting을 분리한다.
+- [x] export 필드:
+  - [x] `source_id`
+  - [x] `document_id`
+  - [x] `title`
+  - [x] `body`
+  - [x] `content_hash`
+  - [x] `uri`
+  - [x] `visibility`
+  - [x] `created_at`
+  - [x] `updated_at`
+  - [x] `metadata.owner`
+  - [x] `metadata.repo`
+  - [x] `metadata.tag_name`
+  - [x] `metadata.published_at`
+  - [x] `metadata.is_special`
+  - [x] `metadata.notify_reason`
+- [x] Slack formatting과 Knowledge export formatting을 분리한다. — Slack path는 `.github/scripts/check_release.py`, Knowledge path는 `scripts/export_knowledge_jsonl.py`
 
 ### P2 — 품질/요약 확장
 
@@ -111,15 +111,15 @@ release 문서 예시:
 
 ## 5. 테스트 TODO
 
-- [ ] fixture release feed로 JSONL export snapshot 테스트를 만든다.
-- [ ] tag/repo 기반 document_id 안정성 테스트를 만든다.
+- [x] fixture release feed로 JSONL export snapshot 테스트를 만든다. — `tests/test_knowledge_export.py`
+- [x] tag/repo 기반 document_id 안정성 테스트를 만든다.
 - [ ] Slack webhook/GitHub token이 payload/log에 포함되지 않는지 테스트한다.
 - [ ] `--from-cache` 경로가 외부 API를 호출하지 않는지 테스트한다.
 - [ ] special release 판정과 export metadata가 일치하는지 테스트한다.
 
 ## 6. 중앙 연동 수용 기준
 
-- [ ] `fordongdorrong knowledge validate-export github-stars.jsonl`이 통과한다.
+- [x] `fordongdorrong knowledge validate-export github-stars.jsonl`이 통과한다. — 중앙 validator smoke 완료
 - [ ] 같은 release를 반복 import해도 중복 문서가 생기지 않는다.
 - [ ] 검색 결과 provenance에 `owner/repo`, `tag_name`, `html_url`, `published_at`이 포함된다.
 - [ ] export 실행만으로 Slack 알림이 발송되지 않는다.

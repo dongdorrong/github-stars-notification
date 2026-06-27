@@ -122,6 +122,18 @@ llm:
 
 자세한 설계는 [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)를 봅니다.
 
+### fordongdorrong Knowledge export
+
+생성된 `.cache/release-feed.json`을 GitHub API 재호출이나 Slack 전송 없이 중앙 Knowledge Store 계약(JSONL)으로 내보냅니다.
+
+```bash
+./scripts/export_knowledge_jsonl.py \
+  --feed .cache/release-feed.json \
+  --output /tmp/github-stars.knowledge.jsonl
+```
+
+산출물은 `fordongdorrong`의 `fordong knowledge validate-export` / `import --dry-run`으로 검증합니다.
+
 ## 🚀 실행
 
 ### GitHub Actions
