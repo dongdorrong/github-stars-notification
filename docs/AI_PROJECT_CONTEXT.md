@@ -13,6 +13,7 @@ GitHub에서 star한 저장소 목록을 조회하고, 각 저장소의 최신 G
 - 새 release가 `config.yaml`의 정책을 만족하면 Slack으로 사람이 읽기 쉬운 메시지를 보낸다.
 - `config.yaml`에 등록한 관심 프로젝트는 Slack 메시지에서 `⭐`로 강조하고, 정책상 5개 미만이어도 바로 알릴 수 있다.
 - `.cache/release-feed.json`을 생성해 향후 다른 프로젝트/애플리케이션, SQLite/PostgreSQL, 로컬 LLM 요약 파이프라인으로 확장할 수 있게 한다.
+- `fordongdorrong` 주도 RAG/Knowledge Store 전환 TODO는 `docs/rag-todo.md`를 기준으로 한다.
 
 ## 3. Repo 구조
 
