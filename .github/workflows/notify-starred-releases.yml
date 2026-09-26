@@ -1,11 +1,5 @@
 name: Notify Starred Releases
 on:
-  # 2026-09-27 inventory bootstrap용 1회성 push trigger.
-  # inventory 확인 후 제거한다.
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/notify-starred-releases.yml'
   schedule:
     - cron: '0 23 * * *'  # 한국시간 08:00
     - cron: '0 5 * * *'   # 한국시간 14:00
