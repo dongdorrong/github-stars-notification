@@ -23,7 +23,8 @@ GitHub에서 스타를 준 저장소의 새로운 릴리스를 감지하고, <br
 ## 🎯 기능
 
 - 🔍 GitHub 스타 저장소의 최신 릴리스 자동 감지
-- ⏰ 하루 3번 자동 체크: 한국시간 08시, 14시, 17시 (`0 23,5,8 * * *` UTC)
+- 📦 전체 starred repository 메타데이터를 `.cache/stars-inventory.json`으로 생성하고 `starred-inventory` artifact로 보관
+- ⏰ 하루 3번 자동 체크: 한국시간 08시, 14시, 17시 (UTC `23:00`, `05:00`, `08:00`)
 - 💾 `.cache/releases.json` 기반 중복 알림 방지
 - 💬 Slack Incoming Webhook 알림
 - ⭐ 관심 프로젝트 강조 및 즉시 알림 정책
@@ -138,7 +139,12 @@ llm:
 
 ### GitHub Actions
 
-워크플로우는 schedule 또는 Actions 탭의 `Run workflow`로 실행됩니다.
+워크플로우는 schedule 또는 Actions 탭의 `Run workflow`로 실행됩니다. 수동 실행은 기본적으로 Slack 전송을 억제하며, 실제 알림까지 보내려면 `send_slack=true`를 선택합니다.
+
+매 실행마다 `starred-inventory` artifact에 다음 파일을 남깁니다.
+
+- `repos.txt`: `owner/repo` 전체 목록
+- `.cache/stars-inventory.json`: description/topics/language/update 시각 등 분류용 메타데이터
 
 ### 로컬 fixture 테스트
 
@@ -176,7 +182,14 @@ python3 .github/scripts/check_release.py \
 export GH_TOKEN=...
 export GITHUB_OUTPUT=/tmp/github-output.txt
 
-gh api /user/starred --paginate | jq -r '.[].full_name' > repos.txt
+mkdir -p .cache
+
+gh api /user/starred --paginate \
+  --jq '.[] | {full_name, description, html_url, language, topics, archived, disabled, fork, pushed_at, updated_at, stargazers_count, open_issues_count}' \
+  > .cache/stars-inventory.jsonl
+jq -s 'sort_by(.full_name)' .cache/stars-inventory.jsonl > .cache/stars-inventory.json
+jq -r '.[].full_name' .cache/stars-inventory.json > repos.txt
+
 python3 .github/scripts/check_release.py
 ```
 

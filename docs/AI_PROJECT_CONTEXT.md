@@ -13,6 +13,7 @@ GitHub에서 star한 저장소 목록을 조회하고, 각 저장소의 최신 G
 - 새 release가 `config.yaml`의 정책을 만족하면 Slack으로 사람이 읽기 쉬운 메시지를 보낸다.
 - `config.yaml`에 등록한 관심 프로젝트는 Slack 메시지에서 `⭐`로 강조하고, 정책상 5개 미만이어도 바로 알릴 수 있다.
 - `.cache/release-feed.json`을 생성해 향후 다른 프로젝트/애플리케이션, SQLite/PostgreSQL, 로컬 LLM 요약 파이프라인으로 확장할 수 있게 한다.
+- 전체 starred repository 메타데이터를 `.cache/stars-inventory.json`으로 만들고 `starred-inventory` artifact로 남겨 분류/재점검 입력으로 재사용한다.
 - `fordongdorrong` 주도 RAG/Knowledge Store 전환 TODO는 `docs/rag-todo.md`를 기준으로 한다.
 
 ## 3. Repo 구조
@@ -60,8 +61,15 @@ GitHub에서 star한 저장소 목록을 조회하고, 각 저장소의 최신 G
 
 ```yaml
 on:
-  schedule: [cron: '0 23,5,8 * * *']
+  schedule:
+    - cron: '0 23 * * *'
+    - cron: '0 5 * * *'
+    - cron: '0 8 * * *'
   workflow_dispatch:
+    inputs:
+      send_slack:
+        type: boolean
+        default: false
 ```
 
 주의:
@@ -75,11 +83,12 @@ on:
 2. `actions/setup-python@v5` with `python-version: '3.x'`
 3. `.github/scripts/requirements.txt` 설치
 4. `.cache` restore/save 준비 (`actions/cache@v4`, run별 key + restore prefix)
-5. `gh api /user/starred --paginate | jq -r '.[].full_name' > repos.txt`
+5. `gh api /user/starred --paginate` 결과에서 전체 metadata inventory를 `.cache/stars-inventory.json`으로 만들고 `repos.txt`를 파생한다.
 6. `python .github/scripts/check_release.py`
-7. `.cache/release-feed.json`을 `release-feed` artifact로 업로드
-8. GitHub Step Summary에 결과 요약
-9. `steps.detect.outputs.has_new == 'true'`면 `curl`로 `SLACK_WEBHOOK_URL`에 Slack payload 전송
+7. `repos.txt` + `.cache/stars-inventory.json`을 `starred-inventory` artifact로 업로드한다.
+8. `.cache/release-feed.json`을 `release-feed` artifact로 업로드한다.
+9. GitHub Step Summary에 전체 star 수와 release 감지 결과를 기록한다.
+10. 정기 실행에서 `has_new=true`이면 Slack을 전송한다. 수동 실행은 `send_slack=true`를 명시한 경우에만 Slack을 전송한다.
 
 ## 6. Script 동작 상세
 

@@ -1,7 +1,22 @@
 name: Notify Starred Releases
 on:
-  schedule: [cron: '0 23,5,8 * * *']  # 매일 한국시간 08시, 14시, 17시에 실행 (UTC 기준)
+  # 2026-09-27 inventory bootstrap용 1회성 push trigger.
+  # inventory 확인 후 제거한다.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/notify-starred-releases.yml'
+  schedule:
+    - cron: '0 23 * * *'  # 한국시간 08:00
+    - cron: '0 5 * * *'   # 한국시간 14:00
+    - cron: '0 8 * * *'   # 한국시간 17:00
   workflow_dispatch:
+    inputs:
+      send_slack:
+        description: '정책 조건 충족 시 Slack 알림도 전송'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   check:
@@ -38,8 +53,18 @@ jobs:
       - name: List starred repos
         id: star
         run: |
+          mkdir -p .cache
+
           gh api /user/starred --paginate \
-            | jq -r '.[].full_name' > repos.txt
+            --jq '.[] | {full_name, description, html_url, language, topics, archived, disabled, fork, pushed_at, updated_at, stargazers_count, open_issues_count}' \
+            > .cache/stars-inventory.jsonl
+
+          jq -s 'sort_by(.full_name)' .cache/stars-inventory.jsonl \
+            > .cache/stars-inventory.json
+          jq -r '.[].full_name' .cache/stars-inventory.json \
+            > repos.txt
+
+          echo "repo_count=$(jq 'length' .cache/stars-inventory.json)" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
@@ -48,6 +73,16 @@ jobs:
         run: python .github/scripts/check_release.py
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Upload starred inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: starred-inventory
+          path: |
+            repos.txt
+            .cache/stars-inventory.json
+          if-no-files-found: error
 
       - name: Upload deterministic release feed
         if: always()
@@ -62,6 +97,7 @@ jobs:
         run: |
           {
             echo "## GitHub starred release check"
+            echo "- starred repos: ${{ steps.star.outputs.repo_count }}"
             echo "- notify: ${{ steps.detect.outputs.has_new }}"
             echo "- reason: ${{ steps.detect.outputs.notify_reason }}"
             echo "- releases: ${{ steps.detect.outputs.release_count }}"
@@ -71,7 +107,12 @@ jobs:
 
   notify:
     needs: check
-    if: needs.check.outputs.has_new == 'true'
+    # 정기 실행은 기존대로 알림을 보내고, 수동 실행은 send_slack=true일 때만 보낸다.
+    # 임시 push bootstrap 실행에서는 Slack을 전송하지 않는다.
+    if: >-
+      needs.check.outputs.has_new == 'true' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.send_slack == true))
     runs-on: ubuntu-latest
     strategy:
       matrix:

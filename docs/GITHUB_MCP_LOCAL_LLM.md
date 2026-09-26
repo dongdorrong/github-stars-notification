@@ -28,7 +28,7 @@ feed에는 다음 계약이 들어간다.
 - `llm_contract`: 로컬 LLM이 해도 되는 일과 하면 안 되는 일
 - `mcp_contract`: GitHub MCP를 붙일 때의 읽기 전용 경계
 
-GitHub Actions에서는 이 feed를 `release-feed` artifact로 업로드한다.
+GitHub Actions에서는 이 feed를 `release-feed` artifact로 업로드한다. 별도로 전체 starred repository metadata는 `.cache/stars-inventory.json`에 정규화하고 `starred-inventory` artifact로 보관한다. 이 inventory는 LLM/분석 계층의 분류 입력이며 release cache/알림 판정에는 관여하지 않는다.
 
 ## 로컬 LLM에 넘길 프롬프트 예시
 
@@ -68,7 +68,7 @@ docker run -i --rm \
 권장 사용:
 
 1. MCP의 `list_starred_repositories` 같은 읽기 도구로 starred repo 후보를 가져온다.
-2. 결과를 `repos.txt` 또는 별도 collector output으로 저장한다.
+2. 결과를 `repos.txt`와 `.cache/stars-inventory.json` 같은 deterministic collector output으로 저장한다.
 3. `check_release.py`가 release 조회/캐시 비교/알림 판단을 수행한다.
 4. `.cache/release-feed.json`을 로컬 LLM에 넘겨 요약을 만든다.
 
