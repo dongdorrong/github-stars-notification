@@ -16,9 +16,44 @@ GitHub에서 스타를 준 저장소의 새로운 릴리스를 감지하고, <br
 
 - Repo-local agent guidance: [`AGENTS.md`](AGENTS.md)
 - Project handoff/context: [`docs/AI_PROJECT_CONTEXT.md`](docs/AI_PROJECT_CONTEXT.md)
+- Kubernetes Intelligence 목표 아키텍처: [`docs/KUBERNETES_INTELLIGENCE_ARCHITECTURE.md`](docs/KUBERNETES_INTELLIGENCE_ARCHITECTURE.md)
+- 단계별 구현 로드맵: [`docs/KUBERNETES_INTELLIGENCE_ROADMAP.md`](docs/KUBERNETES_INTELLIGENCE_ROADMAP.md)
+- 결정적 상태·AI 경계 ADR: [`docs/adr/0001-deterministic-event-state-and-ai-boundary.md`](docs/adr/0001-deterministic-event-state-and-ai-boundary.md)
+- Codex P0 UltraGoal: [`docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`](docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md)
 - GitHub MCP + 로컬 LLM 연동 설계: [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)
 - 보안 레이어 후속 조치: [`docs/SECURITY_LAYERING_NOTES.md`](docs/SECURITY_LAYERING_NOTES.md)
 - RAG/Knowledge Store 전환 TODO: [`docs/rag-todo.md`](docs/rag-todo.md)
+
+## 🧭 Kubernetes Ecosystem Intelligence 확장 계획
+
+현재 구현은 starred repository의 latest Release 감지와 Slack 알림에 집중합니다. 다음 단계에서는 Kubernetes/Cloud Native 생태계의 공식 Release, GitHub Security Advisory, Maintainer Announcement를 수집하고, 결정적 정책과 선택적 로컬 LLM 분석을 거쳐 Critical/High/Digest로 전달하는 구조로 확장합니다.
+
+```text
+Starred repositories
+  -> Kubernetes ecosystem classification
+  -> Releases / GHSA / official announcements
+  -> durable event store + notification outbox
+  -> deterministic priority policy
+  -> local LLM/Codex advisory analysis
+  -> Critical / High / Digest Slack delivery
+```
+
+핵심 원칙:
+
+- 원본 이벤트, notification state, AI 분석 결과를 분리합니다.
+- LLM은 신규/중복 판정, 상태 변경, Slack 전송 여부를 결정하지 않습니다.
+- Slack 성공 전에는 이벤트를 delivered 처리하지 않습니다.
+- 수동 preview 실행은 운영 상태를 소비하지 않습니다.
+- private/internal repository 정보는 public artifact와 Knowledge export에서 기본 제외합니다.
+
+GitHub 백로그:
+
+- Epic: [#3 Kubernetes ecosystem official intelligence watcher](https://github.com/dongdorrong/github-stars-notification/issues/3)
+- P0: [#4 event/outbox](https://github.com/dongdorrong/github-stars-notification/issues/4), [#5 incremental releases](https://github.com/dongdorrong/github-stars-notification/issues/5), [#6 state-safe preview/workflow](https://github.com/dongdorrong/github-stars-notification/issues/6)
+- P1: [#7 project registry](https://github.com/dongdorrong/github-stars-notification/issues/7), [#8 GHSA](https://github.com/dongdorrong/github-stars-notification/issues/8), [#9 local LLM](https://github.com/dongdorrong/github-stars-notification/issues/9), [#10 Slack routing](https://github.com/dongdorrong/github-stars-notification/issues/10)
+- P2: [#11 maintainer announcements](https://github.com/dongdorrong/github-stars-notification/issues/11), [#12 visibility/Knowledge/CI](https://github.com/dongdorrong/github-stars-notification/issues/12)
+
+> 이 절은 목표 설계와 백로그를 설명합니다. 현재 운영 동작은 아래 문서와 코드에 기술된 latest Release/cache 기반 구현입니다.
 
 ## 🎯 기능
 
