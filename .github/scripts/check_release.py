@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from starwatch.notifier import WebhookTransport
 from starwatch.pipeline import run_pipeline
-from starwatch.release_collector import FixtureReleaseSource, LiveReleaseSource
+from starwatch.release_collector import FixtureReleaseSource, LiveReleaseSource, assess_collection
 
 CACHE_PATH = Path(".cache/releases.json")
 STATE_DB_PATH = Path(".cache/events.sqlite3")
@@ -577,7 +577,7 @@ def build_release_feed(
                 "send_notifications",
                 "override_notification_policy",
             ],
-            "input_guidance": "Use releases[] as the deterministic source. Treat summaries as advisory text only.",
+            "input_guidance": "Legacy detector output: releases[] is newly detected releases only, not an accumulated notification batch. Treat summaries as advisory text only.",
         },
         "mcp_contract": {
             "role": "optional_read_only_collection_surface",
@@ -594,6 +594,11 @@ def write_github_outputs(
     feed_path: Path,
     release_count: int,
     special_release_count: int,
+    collection_success_count: int = 0,
+    collection_error_count: int = 0,
+    collection_degraded: bool = False,
+    collector_errors_by_type: dict[str, int] | None = None,
+    scanned_repos: int = 0,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("a", encoding="utf-8") as output:
@@ -604,6 +609,11 @@ def write_github_outputs(
         output.write(f"release_count={release_count}\n")
         output.write(f"special_release_count={special_release_count}\n")
         output.write(f"notify_reason={decision.reason}\n")
+        output.write(f"collection_success_count={collection_success_count}\n")
+        output.write(f"scanned_repos={scanned_repos}\n")
+        output.write(f"collection_error_count={collection_error_count}\n")
+        output.write(f"collection_degraded={str(collection_degraded).lower()}\n")
+        output.write(f"collector_errors_by_type={json.dumps(collector_errors_by_type or {}, sort_keys=True)}\n")
         if payloads:
             safe = json.dumps(payloads[0], ensure_ascii=False).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             output.write(f"payload={safe}\n")
@@ -632,8 +642,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--feed-path", type=Path, default=None)
     parser.add_argument("--github-output", type=Path, default=None)
     parser.add_argument("--fixture-releases", type=Path, default=None, help="JSON fixture for token-free local tests")
-    parser.add_argument("--sleep-seconds", type=float, default=0.3)
-    parser.add_argument("--no-sleep", action="store_true")
+    parser.add_argument("--sleep-seconds", type=float, default=None,
+                        help="Deprecated compatibility flag; collector no longer paces repositories")
+    parser.add_argument("--no-sleep", action="store_true",
+                        help="Deprecated compatibility flag; collector no longer paces repositories")
     return parser
 
 
@@ -649,6 +661,8 @@ def _assert_safe_outputs(paths: list[Path], protected: list[Path]) -> None:
 
 
 def run(args: argparse.Namespace, transport: Any = None) -> int:
+    if getattr(args, "sleep_seconds", None) is not None or getattr(args, "no_sleep", False):
+        print("WARNING: --sleep-seconds/--no-sleep are deprecated and have no effect", file=sys.stderr)
     config = load_config(args.config)
     feed_path = args.feed_path or Path(config["feed"]["output_path"])
     github_output_env = os.environ.get("GITHUB_OUTPUT")
@@ -686,8 +700,8 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         send_slack=send_slack,
         transport=transport,
     )
-    releases = [
-        {
+    def feed_release(event: dict[str, Any]) -> dict[str, Any]:
+        return {
             "repo": event["repository"],
             "tag": event["tag_name"],
             "name": event["release_name"],
@@ -698,9 +712,17 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
             "release_id": event["release_id"],
             "prerelease": event["prerelease"],
         }
-        for event in result.new_events
-    ]
+
+    releases = [feed_release(event) for event in result.new_events]
+    pending_releases = [feed_release(event) for event in result.pending]
+    pending_by_id = {item["event_id"]: item for item in pending_releases}
+    batch_ids = [event_id for chunk in result.chunks for event_id in chunk.event_ids]
+    if len(batch_ids) != len(set(batch_ids)) or any(event_id not in pending_by_id for event_id in batch_ids):
+        raise ValueError("Slack chunk event mapping is invalid")
+    notification_batch = [pending_by_id[event_id] for event_id in batch_ids]
+    slack_chunks = [{"event_ids": chunk.event_ids, "payload": chunk.payload} for chunk in result.chunks]
     payloads = [chunk.payload for chunk in result.chunks]
+    collector_health = assess_collection(result.collected)
     collector_errors_by_type = dict(sorted(Counter(
         f"http_{error.status}" if isinstance(error.status, int) else "collection_error"
         for error in result.collected.errors
@@ -720,8 +742,13 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         "scanned_repos": result.collected.repositories_scanned,
         "repos_with_release": result.collected.repositories_with_release,
         "collection_error_count": len(result.collected.errors),
+        "collection_success_count": collector_health.success_count,
+        "collection_degraded": collector_health.degraded,
         "collector_errors_by_type": collector_errors_by_type,
         "release_count": len(releases),
+        "new_release_count": len(releases),
+        "pending_release_count": len(pending_releases),
+        "notification_batch_count": len(notification_batch),
         "special_release_count": sum(1 for item in releases if item["is_special"]),
         "pending_count": result.pending_after_delivery_count,
         "pending_before_delivery_count": result.pending_before_delivery_count,
@@ -730,6 +757,10 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         "delivery_succeeded": result.delivery_succeeded,
         "policy": config["notification"],
         "releases": releases,
+        "new_releases": releases,
+        "pending_releases": pending_releases,
+        "notification_batch": notification_batch,
+        "slack_chunks": slack_chunks,
         "slack_payload_count": len(payloads),
         "llm_contract": {
             "enabled": config["llm"]["enabled"],
@@ -746,7 +777,7 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
                 "send_notifications",
                 "override_notification_policy",
             ],
-            "input_guidance": "Use releases[] as the deterministic source. Treat summaries as advisory text only.",
+            "input_guidance": "Use notification_batch[] for the current notification; new_releases[] is this run's discoveries. Treat summaries as advisory text only.",
         },
         "mcp_contract": {
             "role": "optional_read_only_collection_surface",
@@ -763,11 +794,16 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
             feed_path=feed_path,
             release_count=len(releases),
             special_release_count=feed["special_release_count"],
+            collection_success_count=collector_health.success_count,
+            collection_error_count=len(result.collected.errors),
+            collection_degraded=collector_health.degraded,
+            collector_errors_by_type=collector_errors_by_type,
+            scanned_repos=result.collected.repositories_scanned,
         )
     print(f"Scanned repos: {result.collected.repositories_scanned}; new releases: {len(releases)}; "
           f"pending: {len(result.pending)}; collection errors: {collector_errors_by_type}; "
           f"notify reason: {result.decision.reason}; mode: {mode}")
-    return 1 if result.delivery_succeeded is False or result.collected.errors else 0
+    return 1 if result.delivery_succeeded is False or collector_health.fatal else 0
 
 
 def main() -> None:

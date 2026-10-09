@@ -23,11 +23,22 @@ GitHub에서 star한 저장소의 Release를 주기적으로 수집하고, 결�
 ## 3. 현재 실행 흐름
 
 1. workflow가 `gh api /user/starred --paginate`로 starred repository 목록과 inventory를 로컬 파일에 만든다.
-2. Release collector가 각 repository의 모든 page를 끝까지 읽고 GitHub Release ID(`github:release:<id>`)로 중복을 제거한다. 저장소별 API 오류는 다른 저장소와 분리하고 그 저장소의 부분 page 결과는 확정하지 않는다.
+2. Release collector가 각 repository의 모든 page를 끝까지 읽고 GitHub Release ID(`github:release:<id>`)로 중복을 제거한다. 저장소별 API 오류는 다른 저장소와 분리하고 그 저장소의 부분 page 결과는 확정하지 않는다. 격리된 HTTP 404/429/5xx가 전체의 50% 이하이고 최소 한 저장소가 성공했다면 `collection_degraded: true`와 exit 0이다. 401/403, 미분류 오류, 과반 실패, 전체 실패는 exit 1이며 Slack을 억제한다. 성공 저장소의 event는 보존한다.
 3. pipeline이 `.cache/events.sqlite3`의 `events`와 `notification_outbox`를 갱신한다. `.cache/releases.json`은 매번 read-only로 검증하되 ID가 없는 과거 기준선은 DB marker에 따라 최초 저장소 초기화에만 적용하며 원본을 보존한다.
 4. `min_release_count`는 실행별 신규 건수가 아니라 미전달 pending 누적 수에 적용된다. 특별 프로젝트가 pending이면 현재 정책상 즉시 후보가 된다.
 5. commit + `--send-slack`이면 Python notifier가 Slack을 호출한다. 2xx 확인 후 해당 chunk의 event만 `DELIVERED`로 갱신한다. 429/5xx/timeout은 실패 상태와 재시도 metadata를 남긴다.
-6. `.cache/release-feed.json`을 로컬에 만든다. Release body/title은 untrusted input이며 로컬 feed의 public/private 필터링은 아직 보장하지 않는다. workflow는 inventory/feed를 artifact로 업로드하지 않는다.
+6. `.cache/release-feed.json`을 로컬에 만든다. Workflow는 inventory/feed를 artifact로 업로드하지 않는다.
+
+Feed schema v1의 배열은 분리된 계약이다.
+
+| 필드 | 의미 |
+| --- | --- |
+| `new_releases[]`, `new_release_count` | 이번 실행에서 처음 발견한 event. 기존 `releases[]`/`release_count`의 고정 alias이며 Slack 상태에 따라 의미가 달라지지 않는다. Knowledge exporter는 이 discovery alias만 읽는다. |
+| `pending_releases[]`, `pending_release_count` | 전송 전 선택 가능한 pending. 지연 재시도 중인 event는 제외한다. |
+| `notification_batch[]`, `notification_batch_count` | `slack_chunks[].event_ids`와 순서까지 일치하는 생성 알림 batch. LLM의 현재 알림 분석 입력이다. |
+| `pending_count` | 지연 재시도를 포함한 **전송 후** 미전달 수. `pending_before_delivery_count`는 같은 기준의 전송 전 수다. |
+
+Feed와 Step Summary는 `scanned_repos`, `collection_success_count`, `collection_error_count`, `collection_degraded`, `collector_errors_by_type`에 대응하는 수집 통계와 안전한 HTTP 범주만 남긴다. 오류 응답 본문·헤더·토큰·요청 URL은 남기지 않는다. Release body/title은 untrusted input이며 로컬 feed의 public/private 필터링은 아직 보장하지 않는다.
 
 Draft는 알림 대상에서 제외하며, prerelease는 metadata를 보존하고 현재 Release 정책에 포함한다. Live Release에는 숫자 ID가 필수다. 기존 ID 없는 fixture만 deterministic fixture 전용 fallback ID를 사용한다.
 
@@ -41,6 +52,8 @@ Draft는 알림 대상에서 제외하며, prerelease는 metadata를 보존하�
 | `workflow_dispatch` | 기본 preview; commit은 기본 브랜치에서만 허용 |
 
 Workflow는 `contents: read`, 고정 concurrency group, `cancel-in-progress: false`, job timeout을 사용한다. Preview는 DB cache를 restore해 읽을 수 있지만 새 state cache를 저장하지 않으며 Slack secret을 주입받지 않는다. Commit은 legacy cache를 read-only로 restore하고 별도 DB cache namespace에 유효한 SQLite 파일을 저장한다. Slack 실패로 step이 실패해도 유효한 DB라면 save를 시도한다.
+
+CLI의 `--sleep-seconds`/`--no-sleep`은 이전 호출과의 호환을 위한 deprecated no-op이며 새 collector의 repository pacing을 조정하지 않는다.
 
 Actions cache는 **영구 상태 저장소가 아니다**. Eviction/stale restore/save 실패나 Slack 성공 직후 DB ack·cache save 전에 종료되면 중복 또는 상태 소실이 생길 수 있다. Concurrency는 실행 중인 run을 직렬화하지만 대기 run의 실행 순서·모두 실행됨을 보장하지 않는다. 따라서 이 구현은 exactly-once가 아니다.
 

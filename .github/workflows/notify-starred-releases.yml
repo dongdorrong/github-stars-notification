@@ -139,6 +139,16 @@ jobs:
           REPO_COUNT: ${{ steps.star.outputs.repo_count }}
           PREVIEW_RELEASE_COUNT: ${{ steps.detect_preview.outputs.release_count }}
           COMMIT_RELEASE_COUNT: ${{ steps.detect_commit.outputs.release_count }}
+          PREVIEW_SCANNED: ${{ steps.detect_preview.outputs.scanned_repos }}
+          COMMIT_SCANNED: ${{ steps.detect_commit.outputs.scanned_repos }}
+          PREVIEW_SUCCESS: ${{ steps.detect_preview.outputs.collection_success_count }}
+          COMMIT_SUCCESS: ${{ steps.detect_commit.outputs.collection_success_count }}
+          PREVIEW_ERRORS: ${{ steps.detect_preview.outputs.collection_error_count }}
+          COMMIT_ERRORS: ${{ steps.detect_commit.outputs.collection_error_count }}
+          PREVIEW_DEGRADED: ${{ steps.detect_preview.outputs.collection_degraded }}
+          COMMIT_DEGRADED: ${{ steps.detect_commit.outputs.collection_degraded }}
+          PREVIEW_CATEGORIES: ${{ steps.detect_preview.outputs.collector_errors_by_type }}
+          COMMIT_CATEGORIES: ${{ steps.detect_commit.outputs.collector_errors_by_type }}
         run: |
           {
             echo '## GitHub starred release check'
@@ -146,4 +156,10 @@ jobs:
             echo "- starred repos: ${REPO_COUNT:-unavailable}"
             echo "- releases (preview): ${PREVIEW_RELEASE_COUNT:-n/a}"
             echo "- releases (commit): ${COMMIT_RELEASE_COUNT:-n/a}"
+            echo "- scanned repos (preview/commit): ${PREVIEW_SCANNED:-n/a}/${COMMIT_SCANNED:-n/a}"
+            echo "- successful repo scans (preview/commit): ${PREVIEW_SUCCESS:-n/a}/${COMMIT_SUCCESS:-n/a}"
+            echo "- collector errors (preview/commit): ${PREVIEW_ERRORS:-n/a}/${COMMIT_ERRORS:-n/a}"
+            echo "- collector degraded (preview/commit): ${PREVIEW_DEGRADED:-n/a}/${COMMIT_DEGRADED:-n/a}"
+            echo "- safe error categories (preview): ${PREVIEW_CATEGORIES:-none}"
+            echo "- safe error categories (commit): ${COMMIT_CATEGORIES:-none}"
           } >> "$GITHUB_STEP_SUMMARY"

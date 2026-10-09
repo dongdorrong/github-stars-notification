@@ -145,6 +145,20 @@ llm:
 
 `check_release.py`는 Slack 전송 여부와 무관하게 `.cache/release-feed.json`을 생성합니다. 이 파일은 신뢰할 수 있는 로컬/비공개 앱이나 로컬 LLM의 읽기 연결 지점입니다. Release title/body/URL은 외부 입력이므로 프롬프트·로그·공개 export에 그대로 신뢰하거나 게시하지 마세요.
 
+Feed schema v1의 배열은 서로 다른 시점을 나타냅니다.
+
+| 필드 | 의미 |
+| --- | --- |
+| `new_releases[]`, `new_release_count` | 이번 실행에서 처음 발견한 Release와 그 수. `releases[]`와 `release_count`는 기존 소비자용 **동일한 discovery alias**이며 알림 상태에 따라 의미가 바뀌지 않습니다. |
+| `pending_releases[]`, `pending_release_count` | 전송 전 현재 알림 대상으로 선택할 수 있는 pending Release와 그 수. 지연 재시도 중인 event는 제외됩니다. |
+| `notification_batch[]`, `notification_batch_count` | 생성된 Slack chunk가 표현하는 순서 그대로의 Release와 그 수. 알림 정책이 발동하지 않으면 빈 배열입니다. 부분 전송 실패 시에도 생성 당시 batch를 유지합니다. |
+| `slack_chunks[]` | 각 생성 chunk의 `event_ids`와 `payload`. 모든 chunk의 `event_ids`를 순서대로 합치면 `notification_batch[].event_id`와 같습니다. |
+| `pending_before_delivery_count`, `pending_count` | 지연 재시도를 포함한 전송 전·후 미전달 event 수. `pending_count`는 알림 후보 수가 아닙니다. |
+
+현재 알림을 분석하는 로컬 LLM은 `notification_batch[]`를 사용합니다. `new_releases[]`는 이번 실행의 신규 수집 분석, `releases[]`는 기존 discovery 소비자와 Knowledge exporter의 호환용입니다. Knowledge exporter는 신규 수집분만 내보내며 누적 알림 batch를 내보내지 않습니다.
+
+저장소별 수집 실패는 안전한 범주와 건수만 feed/Actions Step Summary에 남깁니다. 저장소 하나 이상의 수집이 성공하고 실패 비율이 50% 이하이며 모든 실패가 해당 저장소에 격리된 HTTP 404/429/5xx이면 `collection_degraded: true`로 정상 종료합니다. HTTP 401/403, 미분류 오류, 50% 초과 실패, 전체 저장소 실패, 상태 검증 오류 또는 Slack 전송 실패는 종료 코드 1입니다. 치명적 수집 실패에서는 정상 수집 저장소의 event를 보존하되 Slack 전송은 하지 않습니다. 응답 본문·헤더·토큰·요청 URL은 오류 정보에 포함하지 않습니다.
+
 원칙:
 
 - Python이 새 릴리스/중복/알림 여부를 결정합니다.
@@ -180,17 +194,20 @@ llm:
 
 수동 `commit`은 기본 브랜치에서만 허용됩니다. commit 경로는 상태 변경과 정책이 충족될 경우 Slack 전송을 함께 수행합니다. feature branch에서 검증할 때는 `preview`만 사용하세요. Action의 `.cache/events.sqlite3` 보존은 cache에 의존하므로 영구 내구성이나 exactly-once 전달 보장은 아닙니다.
 
+CLI의 `--sleep-seconds`와 `--no-sleep`은 이전 호출과의 호환을 위해서만 받는 **deprecated no-op**입니다. 새 collector의 저장소별 pacing을 조정하지 않습니다. 새 명령에는 넣지 마세요.
+
 ### 로컬 fixture 테스트
 
 실제 GitHub token 없이 preview 수집을 확인할 수 있습니다. 아래 fixture의 숫자 `id`는 live GitHub Release ID에 대응합니다.
 
 ```bash
-cat > /tmp/repos.txt <<'EOF'
+tmp_dir="$(mktemp -d)"
+cat > "$tmp_dir/repos.txt" <<'EOF'
 grafana / grafana
 other/repo
 EOF
 
-cat > /tmp/releases.json <<'EOF'
+cat > "$tmp_dir/releases.json" <<'EOF'
 {
   "grafana/grafana": {
     "id": 120001,
@@ -203,13 +220,13 @@ cat > /tmp/releases.json <<'EOF'
 EOF
 
 python3 .github/scripts/check_release.py \
-  --repos-file /tmp/repos.txt \
-  --fixture-releases /tmp/releases.json \
-  --state-db /tmp/github-stars-preview.sqlite3 \
+  --repos-file "$tmp_dir/repos.txt" \
+  --fixture-releases "$tmp_dir/releases.json" \
+  --state-db "$tmp_dir/events.sqlite3" \
   --mode preview \
-  --feed-path /tmp/release-feed.json \
-  --github-output /tmp/github-output.txt \
-  --no-sleep
+  --feed-path "$tmp_dir/release-feed.json" \
+  --github-output "$tmp_dir/github-output.txt"
+test ! -e "$tmp_dir/events.sqlite3"
 ```
 
 ### 실제 로컬 preview

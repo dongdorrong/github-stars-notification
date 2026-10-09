@@ -20,14 +20,19 @@
 .cache/release-feed.json
 ```
 
-feed에는 다음 계약이 들어간다.
+feed schema v1에는 다음 계약이 들어간다.
 
-- `releases[]`: 이번 실행에서 새 ID로 수집한 릴리스 목록 (미전달 누적 전체는 `pending_count`로 표시)
+- `new_releases[]` / `new_release_count`: 이번 실행에서 처음 발견한 릴리스와 그 수.
+- `pending_releases[]` / `pending_release_count`: 전송 전 현재 알림 대상으로 선택 가능한 pending 릴리스와 그 수. 지연 재시도 중인 event는 제외한다.
+- `notification_batch[]` / `notification_batch_count`: 생성된 Slack chunk의 event ID 순서와 정확히 일치하는 현재 알림 batch와 그 수. 알림 정책이 발동하지 않으면 빈 배열이며, 부분 전송 실패 후에도 생성 당시 batch를 표현한다.
+- `releases[]` / `release_count`: 기존 소비자를 위한 `new_releases[]` / `new_release_count`의 alias. `notify` 값에 따라 의미가 바뀌지 않는다. Knowledge exporter는 이 discovery alias를 읽으므로 누적 pending/notification batch를 내보내지 않는다.
 - `notify`, `notify_reason`: Python 정책 엔진의 알림 판단
 - `policy`: `config.yaml`에서 읽은 알림 정책
 - `mode`, `pending_before_delivery_count`, `pending_count`, `delivery_succeeded`: 실행 모드, 전송 전/후 미전달 수, 전달 결과. `pending_count`는 지연 재시도 중인 event를 포함한 전송 후 수다.
 - `llm_contract`: 로컬 LLM의 허용 작업과 변경하면 안 되는 상태·전달 경계
 - `mcp_contract`: GitHub MCP의 선택적 읽기 전용 수집 경계
+
+수집 오류가 격리된 HTTP 404/429/5xx이며 전체 저장소의 50% 이하이고 최소 하나가 성공했다면 feed의 `collection_degraded`는 `true`이고 실행은 성공한다. 401/403, 미분류 오류, 과반 실패 또는 전체 실패는 실행 오류다. 수집 오류 정보에는 안전한 범주·건수만 포함하며 원문 응답·토큰·URL을 넣지 않는다.
 
 P0 GitHub Actions는 잠재적으로 private starred repository metadata가 포함되는 feed/inventory를 artifact로 업로드하지 않는다. `.cache/release-feed.json`과 `.cache/stars-inventory.json`은 로컬 실행 산출물이다. public/private 분류가 강제되기 전에는 신뢰할 수 있는 소비자에게만 전달한다(#12 후속).
 
@@ -37,7 +42,7 @@ P0 GitHub Actions는 잠재적으로 private starred repository metadata가 포�
 아래 JSON은 github-stars-notification의 deterministic release feed다.
 
 너의 역할:
-- releases[]를 DevOps/Kubernetes/Observability/Security/AI 등으로 분류한다.
+- 현재 알림의 notification_batch[]를 DevOps/Kubernetes/Observability/Security/AI 등으로 분류한다. 이번 실행에 처음 발견된 릴리스만 분석하려면 new_releases[]를 별도로 사용한다.
 - 사람이 오늘 확인할 우선순위를 1~5로 제안한다.
 - Slack 또는 블로그 소재용 요약을 한국어로 짧게 만든다.
 

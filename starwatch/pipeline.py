@@ -9,7 +9,7 @@ from pathlib import Path
 from .event_store import EventStore, now
 from .notifier import SlackTransport, deliver
 from .policy import Decision, select
-from .release_collector import CollectionResult, ReleaseSource, collect_releases
+from .release_collector import CollectionResult, ReleaseSource, assess_collection, collect_releases
 from .slack_payload import SlackChunk, build_chunks
 
 
@@ -129,7 +129,7 @@ def run_pipeline(
         delivered: bool | None = None
         # The cutover invocation itself never sends, including when the caller
         # explicitly enabled Slack. A subsequent run can send post-baseline new events.
-        if send_slack and not legacy_cutover and chunks:
+        if send_slack and not assess_collection(collected).fatal and not legacy_cutover and chunks:
             delivered = deliver(store, chunks, transport)
         pending_after_delivery_count = len(store.pending(include_delayed=True))
         return PipelineResult(collected, new_events, pending, decision, chunks,

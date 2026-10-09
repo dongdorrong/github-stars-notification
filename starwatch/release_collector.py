@@ -35,6 +35,24 @@ class CollectionResult:
     errors: tuple[CollectorError, ...]
 
 
+@dataclass(frozen=True)
+class CollectionHealth:
+    success_count: int
+    degraded: bool
+    fatal: bool
+
+
+def assess_collection(result: CollectionResult) -> CollectionHealth:
+    """Fail closed for systemic/majority errors; tolerate isolated repo failures."""
+    errors = len(result.errors)
+    success = result.repositories_scanned - errors
+    isolated = all(error.status in (404, 429) or
+                   (error.status is not None and 500 <= error.status <= 599)
+                   for error in result.errors)
+    fatal = success == 0 or errors * 2 > result.repositories_scanned or not isolated
+    return CollectionHealth(success, bool(errors) and not fatal, fatal)
+
+
 class FixtureSourceError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
