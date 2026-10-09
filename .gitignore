@@ -13,3 +13,6 @@ release-feed.json
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local development environments
+.venv/

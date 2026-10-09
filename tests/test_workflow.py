@@ -58,13 +58,13 @@ class WorkflowContractTests(unittest.TestCase):
         save = self.workflow.split("      - name: Save event DB", 1)[1].split(
             "      # Do not upload", 1
         )[0]
-        self.assertIn("actions/cache/restore@v4", legacy)
+        self.assertIn("actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830", legacy)
         # Cache version hashes the saved path; old archives used the directory.
         self.assertIn("path: .cache\n", legacy)
         self.assertIn("releases-cache-", legacy)
-        self.assertIn("actions/cache/restore@v4", event)
+        self.assertIn("actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830", event)
         self.assertIn("path: .cache/events.sqlite3", event)
-        self.assertIn("actions/cache/save@v4", save)
+        self.assertIn("actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830", save)
         self.assertIn("path: .cache/events.sqlite3", save)
         self.assertIn("github.run_id }}-${{ github.run_attempt", event)
         self.assertIn("github.run_id }}-${{ github.run_attempt", save)
