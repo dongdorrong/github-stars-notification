@@ -11,6 +11,28 @@ special_projects:
   - "etcd-io / etcd"
   - "istio / istio"
 
+collector:
+  # GitHub Release 목록은 page당 최대 100개를 요청한다.
+  per_page: 100
+  # 최근 incremental 경로의 저장소별 page 상한. 관심 프로젝트는 더 자주 깊게 확인한다.
+  max_incremental_pages_per_repo: 3
+  max_incremental_pages_special_project: 5
+  # 새 저장소의 첫 기준선은 최근 1 page만 읽는다. 알림 여부는 first_run_notify가 결정한다.
+  bootstrap_pages: 1
+  # 최근 경로에서 기존 ID만 있는 완전한 page를 만나면 멈춘다. 과거 검사는 reconciliation이 맡는다.
+  known_only_pages_to_stop: 1
+  # 전체 수집·저장소별 수집 시간 예산(초). 초과 시 나머지 작업은 다음 실행으로 미룬다.
+  global_budget_seconds: 900
+  per_repo_budget_seconds: 60
+  # reconciliation이 실행되는 저장소에서 확인할 과거 page 상한.
+  reconciliation_pages_per_repo: 2
+  reconciliation_pages_special_project: 4
+  # 한 실행에서 deep reconciliation을 수행할 저장소 수 상한.
+  max_reconciliation_repositories_per_run: 10
+  # 저장소별 성공 방문 횟수 기준 shard 주기: 일반 8회당 1회, 관심 프로젝트 2회당 1회.
+  reconciliation_shards: 8
+  special_reconciliation_shards: 2
+
 notification:
   # P0 고정 정책: Release 목록의 draft/prerelease metadata를 모두 수집한다.
   # draft는 게시 전 알림하지 않고, prerelease는 일반 Release와 같은 임계값 정책을 적용한다.

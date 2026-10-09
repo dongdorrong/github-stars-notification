@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from starwatch.notifier import WebhookTransport
 from starwatch.pipeline import run_pipeline
-from starwatch.release_collector import FixtureReleaseSource, LiveReleaseSource, assess_collection
+from starwatch.release_collector import DEFAULT_COLLECTOR, FixtureReleaseSource, LiveReleaseSource, assess_collection
 
 CACHE_PATH = Path(".cache/releases.json")
 STATE_DB_PATH = Path(".cache/events.sqlite3")
@@ -53,6 +53,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "feed": {
         "output_path": str(FEED_PATH),
     },
+    "collector": DEFAULT_COLLECTOR.copy(),
     "llm": {
         "enabled": False,
         "provider": "local",
@@ -241,6 +242,21 @@ def normalize_config(raw_config: dict[str, Any]) -> dict[str, Any]:
         DEFAULT_CONFIG["notification"]["max_slack_text_length"],
         minimum=1_000,
     )
+
+    collector = config.get("collector")
+    if not isinstance(collector, dict):
+        raise ValueError("collector config must be a mapping")
+    for key in DEFAULT_CONFIG["collector"]:
+        value = collector.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"collector.{key} must be a positive integer")
+    if collector["per_page"] > 100:
+        raise ValueError("collector.per_page must be at most 100")
+    for key in ("reconciliation_pages_per_repo", "reconciliation_pages_special_project"):
+        if collector[key] < 2:
+            raise ValueError(f"collector.{key} must be at least 2 for overlap progress")
+    if collector["global_budget_seconds"] > 1200:
+        raise ValueError("collector.global_budget_seconds must be at most 1200")
 
     feed = config.setdefault("feed", {})
     feed["output_path"] = str(feed.get("output_path") or FEED_PATH)
@@ -599,6 +615,15 @@ def write_github_outputs(
     collection_degraded: bool = False,
     collector_errors_by_type: dict[str, int] | None = None,
     scanned_repos: int = 0,
+    repositories_total: int = 0,
+    repositories_started: int = 0,
+    repositories_completed: int = 0,
+    repositories_deferred: int = 0,
+    reconciliation_deferred: int = 0,
+    pages_fetched: int = 0,
+    releases_observed: int = 0,
+    elapsed_seconds: float = 0.0,
+    collection_budget_exhausted: bool = False,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("a", encoding="utf-8") as output:
@@ -607,6 +632,7 @@ def write_github_outputs(
         output.write(f"payloads={json.dumps(payloads, ensure_ascii=False)}\n")
         output.write(f"feed_path={feed_path}\n")
         output.write(f"release_count={release_count}\n")
+        output.write(f"new_release_count={release_count}\n")
         output.write(f"special_release_count={special_release_count}\n")
         output.write(f"notify_reason={decision.reason}\n")
         output.write(f"collection_success_count={collection_success_count}\n")
@@ -614,6 +640,15 @@ def write_github_outputs(
         output.write(f"collection_error_count={collection_error_count}\n")
         output.write(f"collection_degraded={str(collection_degraded).lower()}\n")
         output.write(f"collector_errors_by_type={json.dumps(collector_errors_by_type or {}, sort_keys=True)}\n")
+        output.write(f"repositories_total={repositories_total}\n")
+        output.write(f"repositories_started={repositories_started}\n")
+        output.write(f"repositories_completed={repositories_completed}\n")
+        output.write(f"repositories_deferred={repositories_deferred}\n")
+        output.write(f"reconciliation_deferred={reconciliation_deferred}\n")
+        output.write(f"pages_fetched={pages_fetched}\n")
+        output.write(f"releases_observed={releases_observed}\n")
+        output.write(f"elapsed_seconds={elapsed_seconds:.3f}\n")
+        output.write(f"collection_budget_exhausted={str(collection_budget_exhausted).lower()}\n")
         if payloads:
             safe = json.dumps(payloads[0], ensure_ascii=False).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             output.write(f"payload={safe}\n")
@@ -626,9 +661,6 @@ def print_summary(result: DetectionResult, decision: NotificationDecision, feed_
     print(f"DEBUG: First run: {result.first_run}")
     print(f"DEBUG: Notify: {decision.should_notify} ({decision.reason})")
     print(f"DEBUG: Feed path: {feed_path}")
-    for release in result.releases[:5]:
-        marker = " [special]" if release.is_special else ""
-        print(f"  - {release.repo}: {release.tag} ({release.published}){marker}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -684,12 +716,26 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         if not token:
             print("GH_TOKEN env required for live GitHub API calls", file=sys.stderr)
             return 1
-        source = LiveReleaseSource(token)
+        source = LiveReleaseSource(token, per_page=config["collector"]["per_page"])
     if send_slack and transport is None:
         webhook = os.getenv("SLACK_WEBHOOK_URL")
         if not webhook:
             raise ValueError("SLACK_WEBHOOK_URL is required for --send-slack")
         transport = WebhookTransport(webhook)
+
+    def safe_progress(progress: dict[str, Any]) -> None:
+        reference = progress.get("reference")
+        status = progress.get("status")
+        ordinal = progress.get("ordinal")
+        total = progress.get("total")
+        pages = progress.get("pages")
+        if (isinstance(reference, str) and re.fullmatch(r"[0-9a-f]{6,32}", reference)
+                and status in {"started", "completed", "deferred", "error"}
+                and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                        for value in (ordinal, total, pages))):
+            print(f"Collector progress: repository={ordinal}/{total} ref={reference} "
+                  f"pages={pages} status={status}", flush=True)
+
     result = run_pipeline(
         state_path=state_path,
         legacy_path=args.cache_path,
@@ -699,6 +745,7 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         mode=mode,
         send_slack=send_slack,
         transport=transport,
+        progress=safe_progress,
     )
     def feed_release(event: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -740,6 +787,15 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         "mode": mode,
         "first_run": result.first_run,
         "scanned_repos": result.collected.repositories_scanned,
+        "repositories_total": result.collected.repositories_total,
+        "repositories_started": result.collected.repositories_started,
+        "repositories_completed": result.collected.repositories_completed,
+        "repositories_deferred": result.collected.repositories_deferred,
+        "reconciliation_deferred": result.collected.reconciliation_deferred,
+        "pages_fetched": result.collected.pages_fetched,
+        "releases_observed": result.collected.releases_observed,
+        "elapsed_seconds": round(result.collected.elapsed_seconds, 3),
+        "collection_budget_exhausted": result.collected.collection_budget_exhausted,
         "repos_with_release": result.collected.repositories_with_release,
         "collection_error_count": len(result.collected.errors),
         "collection_success_count": collector_health.success_count,
@@ -799,10 +855,24 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
             collection_degraded=collector_health.degraded,
             collector_errors_by_type=collector_errors_by_type,
             scanned_repos=result.collected.repositories_scanned,
+            repositories_total=result.collected.repositories_total,
+            repositories_started=result.collected.repositories_started,
+            repositories_completed=result.collected.repositories_completed,
+            repositories_deferred=result.collected.repositories_deferred,
+            reconciliation_deferred=result.collected.reconciliation_deferred,
+            pages_fetched=result.collected.pages_fetched,
+            releases_observed=result.collected.releases_observed,
+            elapsed_seconds=result.collected.elapsed_seconds,
+            collection_budget_exhausted=result.collected.collection_budget_exhausted,
         )
-    print(f"Scanned repos: {result.collected.repositories_scanned}; new releases: {len(releases)}; "
-          f"pending: {len(result.pending)}; collection errors: {collector_errors_by_type}; "
-          f"notify reason: {result.decision.reason}; mode: {mode}")
+    print(f"Repositories: total={result.collected.repositories_total} "
+          f"started={result.collected.repositories_started} completed={result.collected.repositories_completed} "
+          f"deferred={result.collected.repositories_deferred}; pages={result.collected.pages_fetched} "
+          f"reconciliation_deferred={result.collected.reconciliation_deferred} "
+          f"observed={result.collected.releases_observed} new={len(releases)} "
+          f"pending={len(result.pending)} elapsed_seconds={result.collected.elapsed_seconds:.3f} "
+          f"budget_exhausted={str(result.collected.collection_budget_exhausted).lower()} "
+          f"collection_errors={collector_errors_by_type}; notify_reason={result.decision.reason}; mode={mode}")
     return 1 if result.delivery_succeeded is False or collector_health.fatal else 0
 
 

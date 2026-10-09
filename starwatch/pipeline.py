@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
+import time
 
 from .event_store import EventStore, now
 from .notifier import SlackTransport, deliver
@@ -55,19 +57,36 @@ def _instant(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _legacy_suppress(event, cache: dict[str, dict]) -> bool:
-    baseline = cache.get(event.repository)
-    if not baseline:
+def _metadata_int(store: EventStore, key: str, default: int = 0, *, minimum: int = 0) -> int:
+    value = store.get_meta(key)
+    if value is None:
+        return default
+    if not value.isascii() or not value.isdecimal() or int(value) < minimum:
+        raise ValueError("collector state metadata is malformed")
+    return int(value)
+
+
+def _prebootstrap_suppress(event, cutoff: int | None, created_cutoff: str | None) -> bool:
+    """Avoid a delayed historical bootstrap flood when deep pages are first seen.
+
+    Numeric Release IDs are an ordering *heuristic*, not a GitHub guarantee.
+    Stable IDs above the observed bootstrap high-water remain notification-eligible
+    even when a release publication date was backdated.
+    """
+    if cutoff is not None and isinstance(event.release_id, int) and event.release_id <= cutoff:
+        return True
+    if cutoff is not None and isinstance(event.release_id, int):
         return False
-    # The old cache has no Release ID. Its tag and publication date are a
-    # cutover boundary only, never a substitute durable identity.
-    return _instant(event.published_at) <= _instant(baseline["published"])
+    return bool(created_cutoff and event.created_at and
+                _instant(event.created_at) <= _instant(created_cutoff))
 
 
 def run_pipeline(
     *, state_path: Path, legacy_path: Path, repos: list[str], source: ReleaseSource,
     config: dict, mode: str = "preview", send_slack: bool = False,
     transport: SlackTransport | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> PipelineResult:
     if mode not in {"preview", "commit"}:
         raise ValueError("mode must be preview or commit")
@@ -82,38 +101,103 @@ def run_pipeline(
         first_run = not existed
         migration = store.get_meta("legacy_migrated") is None
         legacy_cutover = migration and legacy_path.exists()
-        collected = collect_releases(repos, source, set(config["special_projects"]))
-        failed_repos = {error.repository for error in collected.errors}
         old_ids = store.event_ids()
+        initialized = {repo for repo in repos if store.get_meta("repo_initialized:" + repo) is not None}
+        cursors = {repo: _metadata_int(store, "reconciliation_cursor:" + repo, 1, minimum=1)
+                   for repo in initialized}
+        visits = {repo: _metadata_int(store, "reconcile_visit:" + repo)
+                  for repo in initialized}
+        start_index = _metadata_int(store, "collector_next_repo_index")
+        for repo in initialized:
+            if store.get_meta("bootstrap_max_release_id:" + repo) is not None:
+                _metadata_int(store, "bootstrap_max_release_id:" + repo, minimum=1)
+            for key in ("bootstrap_created_at:", "legacy_cutover_published_at:"):
+                value = store.get_meta(key + repo)
+                if value is not None:
+                    _instant(value)
+        collected = collect_releases(
+            repos, source, set(config["special_projects"]), old_ids,
+            config=config.get("collector"), initialized_repos=initialized,
+            reconciliation_cursors=cursors, reconciliation_visits=visits,
+            start_index=start_index, clock=clock, progress=progress,
+        )
+        successful_bootstraps = {update.repository for update in collected.repo_updates if update.initialized}
+        bootstrapped_ids: dict[str, int] = {}
+        bootstrapped_created: dict[str, str] = {}
+        for event in collected.events:
+            if event.repository in successful_bootstraps and isinstance(event.release_id, int):
+                bootstrapped_ids[event.repository] = max(bootstrapped_ids.get(event.repository, 0), event.release_id)
+            if event.repository in successful_bootstraps and event.created_at:
+                previous = bootstrapped_created.get(event.repository)
+                if previous is None or _instant(event.created_at) > _instant(previous):
+                    bootstrapped_created[event.repository] = event.created_at
         new_events: list[dict] = []
         baseline_created = False
         with store.transaction():
             if migration:
                 store.set_meta("legacy_migrated", "legacy_cache" if legacy_path.exists() else "no_legacy_cache")
+                # Store the read-only cutover hint even for repositories whose
+                # initial scan fails or is deferred. They may bootstrap after
+                # the legacy file is no longer present.
+                for repo, entry in legacy.items():
+                    store.set_meta("legacy_cutover_published_at:" + repo, entry["published"])
+            else:
+                # Older P0 databases may have marked global migration before a
+                # repository's first successful scan. Keep its legacy boundary
+                # when the read-only file is still available.
+                for repo, entry in legacy.items():
+                    if (store.get_meta("repo_initialized:" + repo) is None and
+                            store.get_meta("legacy_cutover_published_at:" + repo) is None):
+                        store.set_meta("legacy_cutover_published_at:" + repo, entry["published"])
             for event in collected.events:
-                if event.repository in failed_repos:
-                    continue
                 if event.event_id not in old_ids:
                     initialized = store.get_meta("repo_initialized:" + event.repository) is not None
                     if not initialized:
-                        if legacy_path.exists() and event.repository in legacy:
-                            suppress = _legacy_suppress(event, legacy)
+                        legacy_date = store.get_meta("legacy_cutover_published_at:" + event.repository)
+                        if legacy_date is not None:
+                            suppress = _instant(event.published_at) <= _instant(legacy_date)
                         else:
                             suppress = not config["notification"]["first_run_notify"]
                         baseline_created = baseline_created or suppress
                     else:
-                        suppress = False
+                        legacy_date = store.get_meta("legacy_cutover_published_at:" + event.repository)
+                        if legacy_date is not None:
+                            suppress = _instant(event.published_at) <= _instant(legacy_date)
+                        else:
+                            cutoff = store.get_meta("bootstrap_max_release_id:" + event.repository)
+                            created_cutoff = store.get_meta("bootstrap_created_at:" + event.repository)
+                            suppress = _prebootstrap_suppress(event, int(cutoff) if cutoff is not None else None,
+                                                             created_cutoff)
+                        baseline_created = baseline_created or suppress
                     store.upsert(event, suppress=suppress or event.draft)
                     new_events.append(event.as_dict())
                 else:
                     store.upsert(event)
-            for repo in repos:
-                if repo not in failed_repos and store.get_meta("repo_initialized:" + repo) is None:
-                    store.set_meta("repo_initialized:" + repo, now())
+            for update in collected.repo_updates:
+                if update.initialized:
+                    store.set_meta("repo_initialized:" + update.repository, now())
+                    has_legacy_boundary = store.get_meta(
+                        "legacy_cutover_published_at:" + update.repository) is not None
+                    if not has_legacy_boundary and not config["notification"]["first_run_notify"] and update.repository in bootstrapped_ids:
+                        store.set_meta("bootstrap_max_release_id:" + update.repository,
+                                       str(bootstrapped_ids[update.repository]))
+                    if not has_legacy_boundary and (
+                        not config["notification"]["first_run_notify"] and
+                        update.repository in bootstrapped_created
+                    ):
+                        store.set_meta("bootstrap_created_at:" + update.repository,
+                                       bootstrapped_created[update.repository])
+                if update.reconciliation_cursor is not None:
+                    store.set_meta("reconciliation_cursor:" + update.repository,
+                                   str(update.reconciliation_cursor))
+                if update.reconciliation_visit is not None:
+                    store.set_meta("reconcile_visit:" + update.repository,
+                                   str(update.reconciliation_visit))
+            store.set_meta("collector_next_repo_index", str(collected.next_start_index))
             # Release IDs and timestamps are diagnostic cursors, not pagination stop points.
             latest_by_repo = {}
             for event in collected.events:
-                if event.repository not in failed_repos and (
+                if (
                     event.repository not in latest_by_repo or
                     (_instant(event.published_at), str(event.release_id)) >
                     (_instant(latest_by_repo[event.repository].published_at), str(latest_by_repo[event.repository].release_id))

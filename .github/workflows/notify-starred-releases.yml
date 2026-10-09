@@ -149,6 +149,24 @@ jobs:
           COMMIT_DEGRADED: ${{ steps.detect_commit.outputs.collection_degraded }}
           PREVIEW_CATEGORIES: ${{ steps.detect_preview.outputs.collector_errors_by_type }}
           COMMIT_CATEGORIES: ${{ steps.detect_commit.outputs.collector_errors_by_type }}
+          PREVIEW_TOTAL: ${{ steps.detect_preview.outputs.repositories_total }}
+          COMMIT_TOTAL: ${{ steps.detect_commit.outputs.repositories_total }}
+          PREVIEW_STARTED: ${{ steps.detect_preview.outputs.repositories_started }}
+          COMMIT_STARTED: ${{ steps.detect_commit.outputs.repositories_started }}
+          PREVIEW_COMPLETED: ${{ steps.detect_preview.outputs.repositories_completed }}
+          COMMIT_COMPLETED: ${{ steps.detect_commit.outputs.repositories_completed }}
+          PREVIEW_DEFERRED: ${{ steps.detect_preview.outputs.repositories_deferred }}
+          COMMIT_DEFERRED: ${{ steps.detect_commit.outputs.repositories_deferred }}
+          PREVIEW_RECONCILIATION_DEFERRED: ${{ steps.detect_preview.outputs.reconciliation_deferred }}
+          COMMIT_RECONCILIATION_DEFERRED: ${{ steps.detect_commit.outputs.reconciliation_deferred }}
+          PREVIEW_PAGES: ${{ steps.detect_preview.outputs.pages_fetched }}
+          COMMIT_PAGES: ${{ steps.detect_commit.outputs.pages_fetched }}
+          PREVIEW_OBSERVED: ${{ steps.detect_preview.outputs.releases_observed }}
+          COMMIT_OBSERVED: ${{ steps.detect_commit.outputs.releases_observed }}
+          PREVIEW_ELAPSED: ${{ steps.detect_preview.outputs.elapsed_seconds }}
+          COMMIT_ELAPSED: ${{ steps.detect_commit.outputs.elapsed_seconds }}
+          PREVIEW_BUDGET_EXHAUSTED: ${{ steps.detect_preview.outputs.collection_budget_exhausted }}
+          COMMIT_BUDGET_EXHAUSTED: ${{ steps.detect_commit.outputs.collection_budget_exhausted }}
         run: |
           {
             echo '## GitHub starred release check'
@@ -160,6 +178,15 @@ jobs:
             echo "- successful repo scans (preview/commit): ${PREVIEW_SUCCESS:-n/a}/${COMMIT_SUCCESS:-n/a}"
             echo "- collector errors (preview/commit): ${PREVIEW_ERRORS:-n/a}/${COMMIT_ERRORS:-n/a}"
             echo "- collector degraded (preview/commit): ${PREVIEW_DEGRADED:-n/a}/${COMMIT_DEGRADED:-n/a}"
+            echo "- repositories total (preview/commit): ${PREVIEW_TOTAL:-n/a}/${COMMIT_TOTAL:-n/a}"
+            echo "- repositories started (preview/commit): ${PREVIEW_STARTED:-n/a}/${COMMIT_STARTED:-n/a}"
+            echo "- repositories completed (preview/commit): ${PREVIEW_COMPLETED:-n/a}/${COMMIT_COMPLETED:-n/a}"
+            echo "- repositories deferred (preview/commit): ${PREVIEW_DEFERRED:-n/a}/${COMMIT_DEFERRED:-n/a}"
+            echo "- reconciliation deferred (preview/commit): ${PREVIEW_RECONCILIATION_DEFERRED:-n/a}/${COMMIT_RECONCILIATION_DEFERRED:-n/a}"
+            echo "- pages fetched (preview/commit): ${PREVIEW_PAGES:-n/a}/${COMMIT_PAGES:-n/a}"
+            echo "- releases observed (preview/commit): ${PREVIEW_OBSERVED:-n/a}/${COMMIT_OBSERVED:-n/a}"
+            echo "- elapsed seconds (preview/commit): ${PREVIEW_ELAPSED:-n/a}/${COMMIT_ELAPSED:-n/a}"
+            echo "- collector budget exhausted (preview/commit): ${PREVIEW_BUDGET_EXHAUSTED:-n/a}/${COMMIT_BUDGET_EXHAUSTED:-n/a}"
             echo "- safe error categories (preview): ${PREVIEW_CATEGORIES:-none}"
             echo "- safe error categories (commit): ${COMMIT_CATEGORIES:-none}"
           } >> "$GITHUB_STEP_SUMMARY"
