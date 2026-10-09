@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dongdorrong/github-stars-notification/schemas/ai-analysis-v1.json",
+  "title": "Kubernetes intelligence advisory analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "event_content_hash", "summary_ko", "impact", "categories", "operator_attention", "reason", "recommended_actions", "affected_components", "confidence", "model", "provider", "prompt_version", "input_truncated", "created_at"],
+  "properties": {
+    "schema_version": {"const": "k8s-intelligence-analysis/v1"},
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "event_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "summary_ko": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "impact": {"enum": ["none", "low", "medium", "high", "critical"]},
+    "categories": {"type": "array", "uniqueItems": true, "maxItems": 6, "items": {"enum": ["security", "breaking-change", "deprecation", "upgrade", "performance", "maintenance"]}},
+    "operator_attention": {"type": "boolean"},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "recommended_actions": {"type": "array", "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 300}},
+    "affected_components": {"type": "array", "maxItems": 20, "items": {"type": "string", "minLength": 1, "maxLength": 160}},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "model": {"type": "string", "minLength": 1, "maxLength": 128},
+    "provider": {"type": "string", "minLength": 1, "maxLength": 64},
+    "prompt_version": {"type": "string", "pattern": "^v[1-9][0-9]{0,3}$"},
+    "input_truncated": {"type": "boolean"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

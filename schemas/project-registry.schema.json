@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dongdorrong/github-stars-notification/schemas/project-registry.schema.json",
+  "title": "Project registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "projects"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "project-registry/v1"
+    },
+    "projects": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*$": {
+          "$ref": "#/$defs/project"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "tier",
+        "classification",
+        "categories",
+        "signals",
+        "routing"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "tier": {
+          "enum": [
+            "critical",
+            "high",
+            "standard",
+            "ignore"
+          ]
+        },
+        "classification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "source"
+          ],
+          "properties": {
+            "result": {
+              "enum": [
+                "CONFIRMED_KUBERNETES",
+                "NOT_KUBERNETES",
+                "AMBIGUOUS"
+              ]
+            },
+            "source": {
+              "const": "explicit"
+            }
+          }
+        },
+        "categories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "kubernetes",
+              "gitops",
+              "autoscaling",
+              "networking",
+              "storage",
+              "observability",
+              "security",
+              "service-mesh",
+              "runtime",
+              "package-management"
+            ]
+          }
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ecosystem",
+              "name"
+            ],
+            "properties": {
+              "ecosystem": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "signals": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "release",
+            "prerelease",
+            "advisory",
+            "announcement",
+            "discussions",
+            "issues",
+            "rss"
+          ],
+          "properties": {
+            "release": {
+              "type": "boolean"
+            },
+            "prerelease": {
+              "type": "boolean"
+            },
+            "advisory": {
+              "type": "boolean"
+            },
+            "announcement": {
+              "type": "boolean"
+            },
+            "discussions": {
+              "type": "boolean"
+            },
+            "issues": {
+              "type": "boolean"
+            },
+            "rss": {
+              "type": "boolean"
+            }
+          }
+        },
+        "routing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "release_floor",
+            "advisory_floor"
+          ],
+          "properties": {
+            "release_floor": {
+              "enum": [
+                "digest",
+                "high"
+              ]
+            },
+            "advisory_floor": {
+              "enum": [
+                "high",
+                "critical"
+              ]
+            }
+          }
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "discussions": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "categories"
+              ],
+              "properties": {
+                "categories": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "issues": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "allow_labels",
+                "deny_labels"
+              ],
+              "properties": {
+                "allow_labels": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "deny_labels": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "rss": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "url",
+                  "official"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "pattern": "^https://[^?#]+$"
+                  },
+                  "official": {
+                    "const": true
+                  },
+                  "redirect_hosts": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9.-]+$"
+                    }
+                  },
+                  "visibility": {
+                    "enum": [
+                      "public",
+                      "private",
+                      "internal",
+                      "unknown"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "private",
+            "internal",
+            "unknown"
+          ]
+        }
+      }
+    }
+  }
+}

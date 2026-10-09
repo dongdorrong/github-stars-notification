@@ -1,0 +1,374 @@
+{
+  "schema_version": "project-registry/v1",
+  "projects": {
+    "kubernetes/kubernetes": {
+      "enabled": true,
+      "tier": "critical",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "security"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "critical"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "kubernetes-sigs/karpenter": {
+      "enabled": true,
+      "tier": "critical",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "autoscaling"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "critical"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "kubernetes-sigs/aws-load-balancer-controller": {
+      "enabled": true,
+      "tier": "high",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "networking"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "high"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "aws/amazon-vpc-cni-k8s": {
+      "enabled": true,
+      "tier": "high",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "networking"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "high"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "argoproj/argo-cd": {
+      "enabled": true,
+      "tier": "critical",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "gitops"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "critical"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "etcd-io/etcd": {
+      "enabled": true,
+      "tier": "critical",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "storage"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "critical"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "istio/istio": {
+      "enabled": true,
+      "tier": "high",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "service-mesh",
+        "networking"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "high"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "grafana/grafana": {
+      "enabled": true,
+      "tier": "high",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "observability"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "high",
+        "advisory_floor": "high"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "prometheus/prometheus": {
+      "enabled": true,
+      "tier": "high",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "observability"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "digest",
+        "advisory_floor": "high"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    },
+    "prometheus-operator/kube-prometheus": {
+      "enabled": true,
+      "tier": "high",
+      "classification": {
+        "result": "CONFIRMED_KUBERNETES",
+        "source": "explicit"
+      },
+      "categories": [
+        "kubernetes",
+        "observability"
+      ],
+      "aliases": [],
+      "packages": [],
+      "signals": {
+        "release": true,
+        "prerelease": true,
+        "advisory": true,
+        "announcement": false,
+        "discussions": false,
+        "issues": false,
+        "rss": false
+      },
+      "routing": {
+        "release_floor": "digest",
+        "advisory_floor": "high"
+      },
+      "sources": {
+        "discussions": {
+          "categories": []
+        },
+        "issues": {
+          "allow_labels": [],
+          "deny_labels": []
+        },
+        "rss": []
+      }
+    }
+  }
+}

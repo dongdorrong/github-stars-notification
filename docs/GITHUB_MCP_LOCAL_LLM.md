@@ -1,91 +1,35 @@
-# GitHub MCP + 로컬 LLM 연동 설계
+# GitHub MCP와 로컬 LLM의 읽기·분석 경계
 
-> 결론: **GitHub MCP는 GitHub 데이터 수집면**, **Python 스크립트는 상태/중복/알림 제어면**, **로컬 LLM은 요약/분류/우선순위 보조면**으로 둔다. LLM이 캐시를 바꾸거나 알림 전송 여부를 결정하지 않는다.
+> GitHub API adapter는 공식 source의 **읽기**, Python/SQLite는 stable ID·cursor·outbox·routing·ack, LLM은 검증된 보조 요약을 맡는다. MCP는 현재 운영 pipeline의 필수 구성요소가 아니다. 실제 로컬 LLM endpoint는 이번 feature branch 검증에서 호출하지 않는다.
 
-## 왜 이렇게 나누나
+## 현재 연결
 
-이 프로젝트는 “새 릴리스인지 아닌지”와 “이미 알림을 보냈는지”가 핵심이다. 이 둘은 결정적이어야 하므로 LLM에 맡기지 않는다. 대신 LLM은 사람이 읽는 부분을 개선하는 데 쓴다.
+`check_release.py`가 생성하는 로컬 feed `github-stars-release-feed/v1`은 `new_releases[]`와 호환 alias `releases[]`(이번 실행 discovery), `pending_releases[]`(전송 전 eligible pending), `notification_batch[]`(생성된 Slack chunk의 ID 순서와 동일)를 구분한다. 외부 로컬 분석이 **현재 알림**을 볼 때는 `notification_batch[]`를 사용한다. Feed는 비공개 repo 내용을 포함할 수 있으므로 공개 artifact가 아니다.
 
-| 계층 | 맡는 일 | 금지할 일 |
-| --- | --- | --- |
-| GitHub MCP / `gh` / PyGithub | starred repo, release, workflow context 조회 | 캐시 변경, Slack 전송 결정 |
-| `.github/scripts/check_release.py` + `starwatch/` | SQLite event/outbox, 중복 방지, 정책 판단, Slack payload·응답, feed 생성 | 자연어 요약 품질에 집착하기 |
-| 로컬 LLM | release feed 요약, 카테고리 분류, 중요도 초안, 메시지 문장 다듬기 | 새 릴리스 판정, 알림 임계값 override, 상태 파일 수정 |
+Pipeline 내부의 `starwatch.analysis.AnalysisService`는 normalized event 사본을 고정 system policy와 분리한 `untrusted_event_json` envelope에 넣는다. 응답은 `schemas/ai-analysis-v1.json`에 맞는 JSON만 허용하고 event ID/hash, provider/model, prompt version, 절단 여부, UTC time은 코드가 채운다. 성공 결과와 결정적 fallback은 raw `events.payload_json`이 아니라 `ai_analyses`의 서로 다른 provider/model key에 저장한다. 캐시는 event ID/content hash/schema/prompt/provider/model에 의존한다. Preview는 설정상 AI가 켜져 있어도 fallback-only이며 실 endpoint를 호출하지 않는다.
 
-## 현재 구현된 연결 지점
-
-`check_release.py`는 매 실행마다 deterministic JSON feed를 만든다.
-
-```text
-.cache/release-feed.json
+```yaml
+analysis:
+  enabled: false
+  provider: openai_compatible
+  base_url_env: LLM_BASE_URL
+  api_key_env: LLM_API_KEY
+  model: local-model
+  timeout_seconds: 30
+  max_retries: 1
+  fail_open_to_fallback: true
 ```
 
-feed schema v1에는 다음 계약이 들어간다.
+Endpoint와 key **값**은 환경/비밀 저장소에서만 가져온다. HTTP는 OpenAI-compatible `POST /v1/chat/completions`만 호출하며 redirect를 따르지 않는다. 401/403/429/5xx/timeout/invalid JSON은 안전 범주로 fallback하고 응답 오류 본문을 읽거나 기록하지 않는다. No tools, browsing, shell, GitHub write, Slack write are exposed to the model. AI의 `impact`는 결정적 보안 floor를 하향할 수 없고 SUPPRESSED도 승격하지 못한다. [로컬 LLM 런북](LOCAL_LLM_RUNBOOK.md)에 설정·fixture·실패 경계를 기록한다.
 
-- `new_releases[]` / `new_release_count`: 이번 실행에서 처음 발견한 릴리스와 그 수.
-- `pending_releases[]` / `pending_release_count`: 전송 전 현재 알림 대상으로 선택 가능한 pending 릴리스와 그 수. 지연 재시도 중인 event는 제외한다.
-- `notification_batch[]` / `notification_batch_count`: 생성된 Slack chunk의 event ID 순서와 정확히 일치하는 현재 알림 batch와 그 수. 알림 정책이 발동하지 않으면 빈 배열이며, 부분 전송 실패 후에도 생성 당시 batch를 표현한다.
-- `releases[]` / `release_count`: 기존 소비자를 위한 `new_releases[]` / `new_release_count`의 alias. `notify` 값에 따라 의미가 바뀌지 않는다. Knowledge exporter는 이 discovery alias를 읽으므로 누적 pending/notification batch를 내보내지 않는다.
-- `notify`, `notify_reason`: Python 정책 엔진의 알림 판단
-- `policy`: `config.yaml`에서 읽은 알림 정책
-- `mode`, `pending_before_delivery_count`, `pending_count`, `delivery_succeeded`: 실행 모드, 전송 전/후 미전달 수, 전달 결과. `pending_count`는 지연 재시도 중인 event를 포함한 전송 후 수다.
-- `llm_contract`: 로컬 LLM의 허용 작업과 변경하면 안 되는 상태·전달 경계
-- `mcp_contract`: GitHub MCP의 선택적 읽기 전용 수집 경계
+## GitHub read-only API와 선택적 MCP
 
-수집 오류가 격리된 HTTP 404/429/5xx이며 **시작한 저장소 중** 50% 이하이고 최소 하나가 이번 bounded scan을 완료했다면 실행은 성공한다. 오류나 예산으로 미룬 저장소가 있으면 feed의 `collection_degraded`는 `true`다. 401/403, 미분류 오류, 시작한 저장소 중 과반 실패 또는 완료 저장소 0건은 실행 오류다. `repositories_completed`는 과거 전체 이력 확인을 뜻하지 않는다. 수집 오류 정보에는 안전한 범주·건수만 포함하며 원문 응답·토큰·URL을 넣지 않는다.
+운영 adapter는 `X-GitHub-Api-Version: 2022-11-28`을 고정하고 `GET` 및 고정된 read-only GraphQL `query`만 허용한다. Release는 pinned PyGithub 목록 page, Global GHSA는 `GET /advisories?modified=...`와 Link cursor, 옵션 Repository GHSA는 `GET /repos/{owner}/{repo}/security-advisories`, Issue는 `GET /repos/{owner}/{repo}/issues?since=...`, Discussion은 GraphQL `repository.discussions`의 `UPDATED_AT` 순서와 `pageInfo` cursor를 사용한다. GHSA/Discussion/Issue의 권한 실패는 해당 source의 safe category로 기록하고 원문 응답·token·URL은 공개 로그에 출력하지 않는다. Repository GHSA는 기본 비활성이다. GitHub rate limit은 response header와 403/429 범주로 처리하되 소스별 진행 상태를 잘못 전진시키지 않는다.
 
-P0 GitHub Actions는 잠재적으로 private starred repository metadata가 포함되는 feed/inventory를 artifact로 업로드하지 않는다. `.cache/release-feed.json`과 `.cache/stars-inventory.json`은 로컬 실행 산출물이다. public/private 분류가 강제되기 전에는 신뢰할 수 있는 소비자에게만 전달한다(#12 후속).
+GitHub MCP를 로컬에서 별도 실험할 때는 공식 서버의 read-only mode와 필요한 toolset만 사용하고, 운영 cursor/event/outbox를 직접 쓰지 않는다. MCP 결과의 body/title도 untrusted data로 취급한다. MCP가 Slack 결정을 내리거나 `repos.txt`/SQLite를 무검증 대체하는 경로는 없다. 공식 [GitHub MCP server](https://github.com/github/github-mcp-server)와 [Copilot MCP 가이드](https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp-in-your-ide/extend-copilot-chat-with-mcp)를 참고한다.
 
-## 로컬 LLM에 넘길 프롬프트 예시
+API 원문: [Global GHSA](https://docs.github.com/en/rest/security-advisories/global-advisories?apiVersion=2022-11-28), [Repository GHSA](https://docs.github.com/en/rest/security-advisories/repository-advisories?apiVersion=2022-11-28), [REST Issues](https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28), [GraphQL Discussions](https://docs.github.com/en/graphql/guides/using-the-graphql-api-for-discussions), [REST pagination](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api).
 
-```text
-아래 JSON은 github-stars-notification의 deterministic release feed다.
+## 롤아웃 중지 조건
 
-너의 역할:
-- 현재 알림의 notification_batch[]를 DevOps/Kubernetes/Observability/Security/AI 등으로 분류한다. 이번 실행에 처음 발견된 릴리스만 분석하려면 new_releases[]를 별도로 사용한다.
-- 사람이 오늘 확인할 우선순위를 1~5로 제안한다.
-- Slack 또는 블로그 소재용 요약을 한국어로 짧게 만든다.
-
-금지:
-- notify 값을 바꾸지 않는다.
-- 새 릴리스/중복 여부를 다시 판정하지 않는다.
-- cache/state 파일 수정을 제안하지 않는다.
-
-JSON:
-<.cache/release-feed.json 내용>
-```
-
-## GitHub MCP를 붙일 때
-
-공식 GitHub MCP 서버는 원격 서버와 로컬 Docker 실행을 모두 제공한다. 로컬에서 붙일 때는 읽기 전용과 필요한 toolset만 켜는 쪽이 안전하다.
-
-예시 Docker 실행 경계:
-
-```bash
-export GITHUB_PAT=...
-
-docker run -i --rm \
-  -e GITHUB_PERSONAL_ACCESS_TOKEN="$GITHUB_PAT" \
-  -e GITHUB_READ_ONLY=1 \
-  -e GITHUB_TOOLSETS="stargazers,repos,actions" \
-  ghcr.io/github/github-mcp-server
-```
-
-권장 사용:
-
-1. MCP의 `list_starred_repositories` 같은 읽기 도구로 starred repo 후보를 가져온다.
-2. 결과를 `repos.txt`와 `.cache/stars-inventory.json` 같은 deterministic collector output으로 저장한다.
-3. `check_release.py`와 `starwatch/`가 모든 Release를 수집하고 event DB/outbox에서 중복·알림·전달 상태를 판단한다.
-4. `.cache/release-feed.json`을 로컬 LLM에 넘겨 요약을 만든다.
-
-## 고도화 포인트
-
-- GitHub Actions 운영 경로는 `gh api` + PyGithub Release 목록 수집을 유지한다.
-- 로컬 실험 경로는 MCP/로컬 LLM을 붙여도 된다.
-- P0의 event/outbox는 SQLite에 저장한다. 다른 애플리케이션과 공유하거나 영구 내구성이 필요할 때 별도 저장소·복제 방식을 검토한다.
-- LLM 결과는 `llm_summary` 같은 별도 필드/테이블에 저장하고, release event 원본과 분리한다.
-
-## 참고 링크
-
-- GitHub 공식 MCP 서버: <https://github.com/github/github-mcp-server>
-- GitHub Copilot MCP 문서: <https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp-in-your-ide/extend-copilot-chat-with-mcp>
+`config.yaml`의 기본 `intelligence.mode: shadow`, `analysis.enabled: false`를 유지하면 새 GHSA/announcement는 운영 Slack으로 가지 않는다. Feature branch preview는 DB save·Slack·실 LLM 호출을 하지 않아야 한다. 실제 endpoint 품질/가용성, Repository GHSA capability, 운영 Slack ack는 fixture만으로 증명할 수 없으며 승인된 [P1/P2 단계별 롤아웃](P1_P2_ROLLOUT_RUNBOOK.md)에서 별도 확인해야 한다. 원격 preview/PR CI 최종 HEAD 결과는 검증 전까지 미기재한다.

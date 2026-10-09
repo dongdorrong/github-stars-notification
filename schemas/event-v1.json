@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Normalized intelligence event",
+  "type": "object",
+  "required": ["event_id", "event_type", "source_id", "repository", "published_at", "content_hash", "visibility"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "source_id": {"type": "string", "minLength": 1},
+    "event_type": {"enum": ["github_release", "github_security_advisory", "github_discussion", "github_issue", "official_rss"]},
+    "repository": {"type": "string"},
+    "published_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "visibility": {"enum": ["public", "private", "internal", "unknown"]},
+    "source_trust": {"type": "integer", "minimum": 0, "maximum": 100},
+    "provenance": {"type": "object"}
+  },
+  "additionalProperties": true
+}

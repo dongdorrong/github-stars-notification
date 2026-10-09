@@ -1,0 +1,3 @@
+# Runtime direct dependencies. Keep PyGithub 2.2.0 until _rawData compatibility is revalidated.
+PyGithub==2.2.0
+PyYAML==6.0.3

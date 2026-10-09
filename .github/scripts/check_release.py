@@ -195,6 +195,11 @@ def parse_limited_yaml(raw: str) -> dict[str, Any]:
 
 
 def load_yaml(raw: str) -> dict[str, Any]:
+    if raw.lstrip().startswith('{'):
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError('config must be a mapping')
+        return parsed
     try:
         import yaml  # type: ignore
     except ModuleNotFoundError:
@@ -269,6 +274,9 @@ def normalize_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     llm["provider"] = str(llm.get("provider") or DEFAULT_CONFIG["llm"]["provider"])
     llm["role"] = str(llm.get("role") or DEFAULT_CONFIG["llm"]["role"])
 
+    if 'intelligence' in config:
+        from starwatch.intelligence import validate_config
+        validate_config(config)
     return config
 
 
@@ -680,6 +688,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--feed-path", type=Path, default=None)
     parser.add_argument("--github-output", type=Path, default=None)
+    parser.add_argument("--inventory", type=Path, default=Path(".cache/stars-inventory.json"))
     parser.add_argument("--fixture-releases", type=Path, default=None, help="JSON fixture for token-free local tests")
     parser.add_argument("--sleep-seconds", type=float, default=None,
                         help="Deprecated compatibility flag; collector no longer paces repositories")
@@ -699,7 +708,7 @@ def _assert_safe_outputs(paths: list[Path], protected: list[Path]) -> None:
                     raise ValueError("output path aliases protected state")
 
 
-def run(args: argparse.Namespace, transport: Any = None) -> int:
+def run(args: argparse.Namespace, transport: Any = None, signal_collectors=None) -> int:
     if getattr(args, "sleep_seconds", None) is not None or getattr(args, "no_sleep", False):
         print("WARNING: --sleep-seconds/--no-sleep are deprecated and have no effect", file=sys.stderr)
     config = load_config(args.config)
@@ -743,6 +752,48 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
             print(f"Collector progress: repository={ordinal}/{total} ref={reference} "
                   f"pages={pages} status={status}", flush=True)
 
+    intelligence = None
+    if 'intelligence' in config:
+        from starwatch.registry import load_registry
+        from starwatch.intelligence import Intelligence
+        from starwatch.advisories import AdvisoryCollector
+        from starwatch.signal_collectors import GitHubReader
+        registry = load_registry(config['intelligence'].get('registry_path', 'config/projects.yaml'),
+                                 config['special_projects'])
+        config['special_projects'] = sorted({p.canonical_name for p in registry.projects.values() if p.immediate_release}
+                                            | {repo for repo in repos if (policy := registry.resolve(repo)) and policy.immediate_release})
+        inventory_path = getattr(args, 'inventory', Path('.cache/stars-inventory.json'))
+        inventory = load_json_file(inventory_path, [])
+        if not isinstance(inventory, list) or any(not isinstance(r, dict) or not isinstance(r.get('full_name'), str) for r in inventory):
+            raise ValueError('invalid starred inventory')
+        indexed = {r['full_name'].lower(): r for r in inventory}
+        inventory = [indexed.get(repo.lower(), {'full_name': repo, 'visibility': 'unknown'}) for repo in repos]
+        collectors = []
+        if not args.fixture_releases:
+            reader = GitHubReader(os.getenv('GH_TOKEN'))
+            if config['intelligence'].get('advisories_enabled', True):
+                collectors.append(AdvisoryCollector(reader, registry))
+                collectors.append(AdvisoryCollector(reader, registry, withdrawn=True))
+            from starwatch.announcements import DiscussionCollector, IssueCollector, RSSCollector
+            for project in registry.projects.values():
+                metadata = indexed.get(project.canonical_name, {})
+                if (project.enabled and project.signals.get('advisory')
+                        and config['intelligence'].get('repository_advisories_enabled', False)):
+                    collectors.append(AdvisoryCollector(reader, registry, repository=project.canonical_name,
+                                                       repository_visibility=metadata.get('visibility', 'unknown')))
+                if not project.enabled or not project.signals.get('announcement'):
+                    continue
+                if mode == 'preview' and metadata.get('visibility') != 'public':
+                    continue
+                if project.signals.get('discussions'):
+                    collectors.append(DiscussionCollector(reader, project, repository_visibility=metadata.get('visibility', 'unknown')))
+                if project.signals.get('issues') and type(metadata.get('id')) is int:
+                    collectors.append(IssueCollector(reader, project, metadata['id'], repository_visibility=metadata.get('visibility', 'unknown')))
+                if project.signals.get('rss'):
+                    collectors.append(RSSCollector(project, public_only=(mode == 'preview')))
+        if signal_collectors is not None:
+            collectors = signal_collectors
+        intelligence = Intelligence(config, registry, inventory, collectors, mode=mode)
     result = run_pipeline(
         state_path=state_path,
         legacy_path=args.cache_path,
@@ -753,9 +804,11 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         send_slack=send_slack,
         transport=transport,
         progress=safe_progress,
+        intelligence=intelligence,
     )
     def feed_release(event: dict[str, Any]) -> dict[str, Any]:
         return {
+            **event,
             "repo": event["repository"],
             "tag": event["tag_name"],
             "name": event["release_name"],
@@ -767,9 +820,10 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
             "prerelease": event["prerelease"],
         }
 
-    releases = [feed_release(event) for event in result.new_events]
-    pending_releases = [feed_release(event) for event in result.pending]
+    releases = [feed_release(intelligence.enrich(event) if intelligence else event) for event in result.new_events]
+    pending_releases = [feed_release(event) for event in result.pending if event['event_type'] == 'github_release']
     pending_by_id = {item["event_id"]: item for item in pending_releases}
+    pending_by_id.update({item['event_id']: item for item in result.pending if item['event_type'] != 'github_release'})
     batch_ids = [event_id for chunk in result.chunks for event_id in chunk.event_ids]
     if len(batch_ids) != len(set(batch_ids)) or any(event_id not in pending_by_id for event_id in batch_ids):
         raise ValueError("Slack chunk event mapping is invalid")
@@ -850,12 +904,32 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
             "boundary": "GitHub MCP may collect GitHub context; this script remains the state and notification source of truth.",
         },
     }
+    from starwatch.security import redact
+    feed['intelligence'] = result.intelligence_metrics or {}
+    feed['new_events'] = releases + (result.new_signal_events or [])
+    feed['pending_events'] = result.pending
+    feed = redact(feed)
     write_json_file(feed_path, feed)
+    if intelligence is not None:
+        from starwatch.artifacts import export_artifacts
+        export_artifacts(config, inventory, feed, feed_path.parent / 'public-artifacts')
+    if intelligence is not None:
+        safe_metrics = json.dumps(intelligence.metrics, sort_keys=True, separators=(',', ':'))
+        print('Intelligence metrics: ' + safe_metrics)
+        if output_path is not None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with output_path.open('a', encoding='utf-8') as output:
+                output.write('intelligence_metrics=' + safe_metrics + '\n')
+        summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+        if summary_path:
+            _assert_safe_outputs([Path(summary_path)], protected)
+            with Path(summary_path).open('a', encoding='utf-8') as summary:
+                summary.write('## Intelligence metrics\n```json\n' + safe_metrics + '\n```\n')
     if output_path is not None:
         write_github_outputs(
             output_path=output_path,
             decision=NotificationDecision(result.decision.should_notify, result.decision.reason),
-            payloads=payloads,
+            payloads=redact(payloads),
             feed_path=feed_path,
             release_count=len(releases),
             special_release_count=feed["special_release_count"],

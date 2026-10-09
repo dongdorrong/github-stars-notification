@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -25,6 +25,9 @@ class ReleaseEvent:
     is_special: bool
     content_hash: str
     raw_metadata: dict[str, Any]
+    visibility: str = "unknown"
+    source_trust: int = 100
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

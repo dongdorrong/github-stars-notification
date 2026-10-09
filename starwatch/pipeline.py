@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +29,8 @@ class PipelineResult:
     pending_after_delivery_count: int
     cutover_policy_applied: bool
     cutover_backlog_suppressed_count: int
+    intelligence_metrics: dict | None = None
+    new_signal_events: list[dict] | None = None
 
 
 def load_legacy_cache(path: Path) -> dict[str, dict]:
@@ -89,6 +91,7 @@ def run_pipeline(
     transport: SlackTransport | None = None,
     clock: Callable[[], float] = time.monotonic,
     progress: Callable[[dict[str, Any]], None] | None = None,
+    intelligence=None,
 ) -> PipelineResult:
     if mode not in {"preview", "commit"}:
         raise ValueError("mode must be preview or commit")
@@ -99,6 +102,7 @@ def run_pipeline(
     cutover_pending_policy = config["notification"].get("cutover_pending_policy", "suppress_existing")
     if cutover_pending_policy not in {"suppress_existing", "preserve_pending"}:
         raise ValueError("notification.cutover_pending_policy must be suppress_existing or preserve_pending")
+    started_at = clock()
     legacy = load_legacy_cache(legacy_path)  # fail before touching DB
     existed = state_path.exists()
     store = EventStore.open(state_path, preview=mode == "preview")
@@ -106,7 +110,7 @@ def run_pipeline(
         first_run = not existed
         migration = store.get_meta("legacy_migrated") is None
         legacy_cutover = migration and legacy_path.exists()
-        old_ids = store.event_ids()
+        old_ids = {row[0] for row in store.db.execute("SELECT event_id FROM events WHERE event_type='github_release'")}
         # A missing migration marker in an already populated DB must not turn
         # existing retryable/delivered rows into a new cutover cohort.
         suppress_cutover_cohort = (
@@ -132,6 +136,11 @@ def run_pipeline(
             reconciliation_cursors=cursors, reconciliation_visits=visits,
             start_index=start_index, clock=clock, progress=progress,
         )
+        if intelligence is not None:
+            collected = replace(collected, events=tuple(
+                replace(event, visibility=intelligence.release_visibility(event.repository),
+                        provenance={'collector': 'github-releases', 'api_resource_id': event.release_id})
+                for event in collected.events))
         successful_bootstraps = {update.repository for update in collected.repo_updates if update.initialized}
         bootstrapped_ids: dict[str, int] = {}
         bootstrapped_created: dict[str, str] = {}
@@ -224,10 +233,19 @@ def run_pipeline(
             for event in latest_by_repo.values():
                 store.set_meta("last_release:" + event.repository, json.dumps({"id": event.release_id, "published_at": event.published_at}))
         store.recover_expired_leases()
+        if intelligence is not None:
+            intelligence.process(store, [event.as_dict() for event in collected.events],
+                                 deadline=started_at + 1200)
         pending = store.pending()
         pending_before_delivery_count = len(store.pending(include_delayed=True))
-        decision = select(pending, config)
-        chunks = build_chunks(pending, config["notification"].get("max_slack_text_length", 35000)) if decision.should_notify else []
+        release_pending = [e for e in pending if e["event_type"] == "github_release"]
+        full_routing = intelligence is not None and config["intelligence"].get("mode") == "full"
+        decision = select(release_pending, config) if not full_routing else Decision(False, "routed_policy")
+        chunks = build_chunks(release_pending, config["notification"].get("max_slack_text_length", 35000)) if decision.should_notify else []
+        if intelligence is not None:
+            chunks.extend(intelligence.select(pending))
+            if chunks and not decision.should_notify:
+                decision = Decision(True, "routed_policy")
         delivered: bool | None = None
         # The cutover invocation itself never sends, including when the caller
         # explicitly enabled Slack. A subsequent run can send post-baseline new events.
@@ -237,6 +255,8 @@ def run_pipeline(
         return PipelineResult(collected, new_events, pending, decision, chunks,
                               first_run, delivered, baseline_created,
                               pending_before_delivery_count, pending_after_delivery_count,
-                              suppress_cutover_cohort, cutover_backlog_suppressed_count)
+                              suppress_cutover_cohort, cutover_backlog_suppressed_count,
+                              intelligence.metrics if intelligence else None,
+                              intelligence.new_events if intelligence else None)
     finally:
         store.close()
