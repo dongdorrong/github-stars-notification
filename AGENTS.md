@@ -30,7 +30,7 @@
 
 1. GitHub Actions가 `gh api /user/starred --paginate`로 star 저장소 목록을 `repos.txt`에 저장한다.
 2. Release collector가 저장소별 최근 목록을 bounded pagination으로 수집하고, 저장된 reconciliation 진행 상태로 과거 페이지를 점진적으로 재확인한다. GitHub Release ID로 중복을 제거하며 한 실행의 전체 이력 확인을 주장하지 않는다.
-3. `check_release.py`의 commit mode는 `.cache/events.sqlite3`의 event/outbox를 갱신한다. 기존 `.cache/releases.json`은 삭제·덮어쓰기 없이 마이그레이션 기준선으로만 읽는다.
+3. `check_release.py`의 commit mode는 `.cache/events.sqlite3`의 event/outbox를 갱신한다. 기존 `.cache/releases.json`은 삭제·덮어쓰기 없이 마이그레이션 기준선으로만 읽는다. 최초 legacy cutover의 기본 `notification.cutover_pending_policy: suppress_existing`은 그 실행에서 발견한 기존 Release를 `SUPPRESSED`로 저장하며 이후 신규 event는 정상 pending 정책을 따른다.
 4. 임계값 미만 event는 outbox에 남아 다음 실행까지 누적된다. Slack 2xx 확인 후에만 delivered로 바뀌며 429/5xx/timeout은 재시도 대상이다.
 5. 수동 실행의 기본 preview는 수집 결과·feed를 보여주되 event DB, outbox, legacy cache, last notification을 변경하거나 Slack을 호출하지 않는다.
 6. workflow는 private starred repository 정보 노출 위험 때문에 inventory와 release feed를 artifact로 업로드하지 않는다. CLI가 만드는 로컬 feed는 신뢰할 수 있는 소비자만 사용한다.

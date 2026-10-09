@@ -63,6 +63,7 @@ Actions cache는 **영구 상태 저장소가 아니다**. Eviction/stale restor
 
 - `notification.first_run_notify` 기본값은 `false`다. cache miss나 처음 보는 repository의 기존 Release를 baseline으로 기록하고 대량 Slack 전송을 막는다.
 - 기존 `.cache/releases.json`의 repo/tag/published는 과거 event ID가 아니라 migration 경계값이다. 최초 migration은 그 실행의 수집 성공 여부와 무관하게 **모든 legacy 저장소**의 published cutoff를 `legacy_cutover_published_at:<repo>`에 기록한다. 실패·deferred 저장소도 이후 첫 수집에 이 경계를 사용하며 legacy 파일이 없어져도 유지된다. 전역 migration marker만 있는 기존 P0 DB에서 미초기화 저장소의 cutoff가 빠졌다면 legacy 파일이 남아 있을 때만 보충할 수 있다. 파일과 metadata가 모두 없으면 원래 경계를 복원할 수 없다. Legacy 파일이 있는 첫 cutover 실행은 Slack을 보내지 않는다. Legacy 파일이 없고 `first_run_notify: true`를 명시한 경우 첫 inventory 알림은 가능하며 bootstrap 억제 경계를 설정하지 않는다.
+- `notification.cutover_pending_policy` 기본값은 `suppress_existing`이다. Legacy 파일이 있고 `legacy_migrated` marker와 기존 event row가 없는 최초 전환 실행에서 발견한 모든 Release를 저장하되 `SUPPRESSED`로 처리한다. `first_run_notify: true`도 이 cutover 억제를 우회하지 않는다. Preview는 메모리에서 같은 정책을 적용할 뿐 marker/state를 저장하지 않는다. 다음 실행의 신규 Release는 기존 결정적 pending 정책을 따르며, 이미 migration을 마친 DB의 pending/retry/delivered를 소급 변경하지 않는다. 명시적 `preserve_pending`은 이전 legacy 날짜 경계 동작을 유지한다.
 - malformed legacy cache나 SQLite DB/schema는 빈 상태로 자동 대체하지 않고 실패한다. 원본 cache는 삭제·덮어쓰지 않는다.
 - 기본 브랜치 운영 rollout 및 rollback은 [P0 런북](P0_RUNBOOK.md)의 백업·대조 절차를 따른다. 오래된 legacy cache만으로 이전 workflow를 바로 재가동하면 중복 알림 위험이 있다.
 

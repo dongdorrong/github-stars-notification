@@ -48,6 +48,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "min_release_count": 5,
         "special_project_always_notify": True,
         "first_run_notify": False,
+        "cutover_pending_policy": "suppress_existing",
         "max_slack_text_length": MAX_TEXT_LENGTH,
     },
     "feed": {
@@ -237,6 +238,8 @@ def normalize_config(raw_config: dict[str, Any]) -> dict[str, Any]:
         notification.get("first_run_notify"),
         DEFAULT_CONFIG["notification"]["first_run_notify"],
     )
+    if notification.get("cutover_pending_policy") not in {"suppress_existing", "preserve_pending"}:
+        raise ValueError("notification.cutover_pending_policy must be suppress_existing or preserve_pending")
     notification["max_slack_text_length"] = parse_int(
         notification.get("max_slack_text_length"),
         DEFAULT_CONFIG["notification"]["max_slack_text_length"],
@@ -624,6 +627,8 @@ def write_github_outputs(
     releases_observed: int = 0,
     elapsed_seconds: float = 0.0,
     collection_budget_exhausted: bool = False,
+    cutover_policy_applied: bool = False,
+    cutover_backlog_suppressed_count: int = 0,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("a", encoding="utf-8") as output:
@@ -649,6 +654,8 @@ def write_github_outputs(
         output.write(f"releases_observed={releases_observed}\n")
         output.write(f"elapsed_seconds={elapsed_seconds:.3f}\n")
         output.write(f"collection_budget_exhausted={str(collection_budget_exhausted).lower()}\n")
+        output.write(f"cutover_policy_applied={str(cutover_policy_applied).lower()}\n")
+        output.write(f"cutover_backlog_suppressed_count={cutover_backlog_suppressed_count}\n")
         if payloads:
             safe = json.dumps(payloads[0], ensure_ascii=False).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             output.write(f"payload={safe}\n")
@@ -808,6 +815,8 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
         "special_release_count": sum(1 for item in releases if item["is_special"]),
         "pending_count": result.pending_after_delivery_count,
         "pending_before_delivery_count": result.pending_before_delivery_count,
+        "cutover_policy_applied": result.cutover_policy_applied,
+        "cutover_backlog_suppressed_count": result.cutover_backlog_suppressed_count,
         "notify": result.decision.should_notify,
         "notify_reason": result.decision.reason,
         "delivery_succeeded": result.delivery_succeeded,
@@ -864,6 +873,8 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
             releases_observed=result.collected.releases_observed,
             elapsed_seconds=result.collected.elapsed_seconds,
             collection_budget_exhausted=result.collected.collection_budget_exhausted,
+            cutover_policy_applied=result.cutover_policy_applied,
+            cutover_backlog_suppressed_count=result.cutover_backlog_suppressed_count,
         )
     print(f"Repositories: total={result.collected.repositories_total} "
           f"started={result.collected.repositories_started} completed={result.collected.repositories_completed} "
@@ -873,6 +884,9 @@ def run(args: argparse.Namespace, transport: Any = None) -> int:
           f"pending={len(result.pending)} elapsed_seconds={result.collected.elapsed_seconds:.3f} "
           f"budget_exhausted={str(result.collected.collection_budget_exhausted).lower()} "
           f"collection_errors={collector_errors_by_type}; notify_reason={result.decision.reason}; mode={mode}")
+    print(f"Cutover: policy_applied={str(result.cutover_policy_applied).lower()} "
+          f"backlog_suppressed={result.cutover_backlog_suppressed_count} "
+          f"pending={result.pending_after_delivery_count}")
     return 1 if result.delivery_succeeded is False or collector_health.fatal else 0
 
 

@@ -361,6 +361,7 @@ class G005PipelineTests(unittest.TestCase):
         self.assertEqual(self.legacy.read_bytes(), before)
 
     def test_legacy_cutover_date_survives_cache_disappearance_for_deep_pages(self):
+        self.config["notification"]["cutover_pending_policy"] = "preserve_pending"
         cutoff = "2026-10-01T00:00:00Z"
         self.legacy.write_text(json.dumps({"owner/repo": {"tag": "v90",
             "published": cutoff}}))
@@ -381,6 +382,7 @@ class G005PipelineTests(unittest.TestCase):
             store.close()
 
     def test_delayed_repo_bootstrap_preserves_legacy_boundary_after_global_migration(self):
+        self.config["notification"]["cutover_pending_policy"] = "preserve_pending"
         cutoff = "2026-10-01T00:00:00Z"
         self.legacy.write_text(json.dumps({"owner/repo": {"tag": "v90",
             "published": cutoff}}))

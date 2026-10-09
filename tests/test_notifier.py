@@ -100,7 +100,8 @@ class NotifierTests(unittest.TestCase):
             {"id": 2, "tag_name": "v2", "published_at": "2026-10-02T00:00:00Z"},
         ]}))
         config = {"special_projects": [], "notification": {"min_release_count": 1,
-                  "special_project_always_notify": False, "first_run_notify": False}}
+                  "special_project_always_notify": False, "first_run_notify": False,
+                  "cutover_pending_policy": "preserve_pending"}}
         transport = FakeTransport(SlackResult(200))
         kwargs = dict(state_path=self.db_path, legacy_path=legacy, repos=["owner/repo"],
                       source=FixtureReleaseSource(fixture), config=config, mode="commit",

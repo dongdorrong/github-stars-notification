@@ -116,6 +116,7 @@ notification:
   min_release_count: 5
   special_project_always_notify: true
   first_run_notify: false
+  cutover_pending_policy: suppress_existing
   max_slack_text_length: 35000
 
 feed:
@@ -133,7 +134,8 @@ llm:
 | --- | --- |
 | `min_release_count` | 미전달 pending 릴리스가 이 개수 이상 누적되면 Slack 알림 후보 |
 | `special_project_always_notify` | 관심 프로젝트 릴리스는 임계값 미만이어도 알림 |
-| `first_run_notify` | 명시적으로 `true`로 설정할 때만 첫 수집의 기존 릴리스를 bootstrap 알림 대상으로 포함. 기본 `false` |
+| `first_run_notify` | 명시적으로 `true`로 설정할 때만 첫 수집의 기존 릴리스를 bootstrap 알림 대상으로 포함. 기본 `false`; legacy 최초 전환에서는 `cutover_pending_policy`가 우선 |
+| `cutover_pending_policy` | 기본 `suppress_existing`: 최초 legacy→SQLite 전환 실행에서 발견한 Release를 저장하되 전부 `SUPPRESSED`로 처리. `preserve_pending`은 기존 legacy 날짜 경계 방식의 명시적 호환 옵션 |
 | `feed.output_path` | 앱/로컬 LLM 연동용 deterministic JSON feed 경로 |
 
 Collector 기본값은 최근 경로를 일반 저장소 최대 3 page, 관심 프로젝트 최대 5 page로 제한하고, 신규 저장소는 최근 1 page를 기준선으로 사용합니다. 한 번의 수집 예산은 900초(설정 상한 1,200초), 저장소당 60초입니다. 과거 페이지 reconciliation은 일반 저장소 8회 중 1회에 최대 2 page, 관심 프로젝트 2회 중 1회에 최대 4 page를 확인하되 한 실행에서 최대 10개 저장소만 deep scan합니다. 미뤄진 저장소와 reconciliation 진행 상태는 다음 commit 실행에 이어집니다. 이 정책은 한 실행의 완전한 이력 스캔이 아니라 API 비용과 지연 발견 사이의 절충입니다. 자세한 복구·관측 방법은 [P0 런북](docs/P0_RUNBOOK.md)을 참고하세요.

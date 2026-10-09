@@ -43,6 +43,9 @@ notification:
   special_project_always_notify: true
   # 캐시가 없는 첫 실행에서 현재 릴리스 목록을 bootstrap 알림으로 보낼지 여부.
   first_run_notify: false
+  # 최초 legacy cache -> SQLite commit에서 관측한 backlog는 저장만 하고 통지하지 않는다.
+  # preserve_pending은 이전 날짜 경계 정책을 명시적으로 유지할 때만 사용한다.
+  cutover_pending_policy: suppress_existing
   # Slack text 제한(40,000자)보다 여유 있게 분할한다.
   max_slack_text_length: 35000
 

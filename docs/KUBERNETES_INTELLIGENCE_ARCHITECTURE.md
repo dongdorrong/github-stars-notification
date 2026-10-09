@@ -624,7 +624,7 @@ P0 Release collector의 실제 feed/Step Summary는 `repositories_total/started/
 
 1. 기존 `.cache/releases.json`을 read-only로 읽어 repo/tag/published 기준선을 만든다. 과거 cache에는 Release ID가 없으므로 과거 ID를 복원했다고 주장하지 않는다.
 2. DB의 `legacy_migrated`와 저장소별 `legacy_cutover_published_at:<repo>` metadata에 일회성 cutover 상태와 날짜 경계를 기록한다.
-3. 기존 legacy cache 파일을 사용하는 첫 cutover run은 Slack을 보내지 않는다. Cache miss에서는 `first_run_notify: false`가 안전 기본값이고, 명시적 `true`는 bootstrap 전송을 허용한다.
+3. 기존 legacy cache 파일을 사용하는 첫 cutover run은 Slack을 보내지 않는다. 기본 `notification.cutover_pending_policy: suppress_existing`에서는 최초 관찰 cohort를 event store에 보존하되 outbox는 `SUPPRESSED`로 저장한다. 이후 신규 event는 정상 pending 정책을 따르며 기존 migrated DB의 상태를 소급 변경하지 않는다. `preserve_pending`은 이전 legacy 날짜 경계 방식의 명시적 호환 옵션이다. Cache miss에서는 `first_run_notify: false`가 안전 기본값이고, 명시적 `true`는 bootstrap 전송을 허용한다.
 4. event DB가 정상 검증된 뒤 legacy cache write를 중단한다.
 5. 최소 한 주기 동안 compatibility report로 old/new detection 결과를 비교한다.
 6. 차이가 설명 가능해도 rollback 기간에는 원본 legacy cache를 삭제하지 않는다. 제거는 별도 운영 결정이다.

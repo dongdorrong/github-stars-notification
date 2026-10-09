@@ -27,6 +27,8 @@ class PipelineResult:
     baseline_created: bool
     pending_before_delivery_count: int
     pending_after_delivery_count: int
+    cutover_policy_applied: bool
+    cutover_backlog_suppressed_count: int
 
 
 def load_legacy_cache(path: Path) -> dict[str, dict]:
@@ -94,6 +96,9 @@ def run_pipeline(
         raise ValueError("Slack is forbidden in preview mode")
     if send_slack and transport is None:
         raise ValueError("Slack transport is required")
+    cutover_pending_policy = config["notification"].get("cutover_pending_policy", "suppress_existing")
+    if cutover_pending_policy not in {"suppress_existing", "preserve_pending"}:
+        raise ValueError("notification.cutover_pending_policy must be suppress_existing or preserve_pending")
     legacy = load_legacy_cache(legacy_path)  # fail before touching DB
     existed = state_path.exists()
     store = EventStore.open(state_path, preview=mode == "preview")
@@ -102,6 +107,12 @@ def run_pipeline(
         migration = store.get_meta("legacy_migrated") is None
         legacy_cutover = migration and legacy_path.exists()
         old_ids = store.event_ids()
+        # A missing migration marker in an already populated DB must not turn
+        # existing retryable/delivered rows into a new cutover cohort.
+        suppress_cutover_cohort = (
+            legacy_cutover and not old_ids and
+            cutover_pending_policy == "suppress_existing"
+        )
         initialized = {repo for repo in repos if store.get_meta("repo_initialized:" + repo) is not None}
         cursors = {repo: _metadata_int(store, "reconciliation_cursor:" + repo, 1, minimum=1)
                    for repo in initialized}
@@ -133,9 +144,12 @@ def run_pipeline(
                     bootstrapped_created[event.repository] = event.created_at
         new_events: list[dict] = []
         baseline_created = False
+        cutover_backlog_suppressed_count = 0
         with store.transaction():
             if migration:
                 store.set_meta("legacy_migrated", "legacy_cache" if legacy_path.exists() else "no_legacy_cache")
+                if legacy_cutover and not old_ids:
+                    store.set_meta("legacy_cutover_pending_policy", cutover_pending_policy)
                 # Store the read-only cutover hint even for repositories whose
                 # initial scan fails or is deferred. They may bootstrap after
                 # the legacy file is no longer present.
@@ -169,6 +183,10 @@ def run_pipeline(
                             suppress = _prebootstrap_suppress(event, int(cutoff) if cutoff is not None else None,
                                                              created_cutoff)
                         baseline_created = baseline_created or suppress
+                    if suppress_cutover_cohort and not event.draft:
+                        cutover_backlog_suppressed_count += 1
+                    suppress = suppress or suppress_cutover_cohort
+                    baseline_created = baseline_created or suppress
                     store.upsert(event, suppress=suppress or event.draft)
                     new_events.append(event.as_dict())
                 else:
@@ -218,6 +236,7 @@ def run_pipeline(
         pending_after_delivery_count = len(store.pending(include_delayed=True))
         return PipelineResult(collected, new_events, pending, decision, chunks,
                               first_run, delivered, baseline_created,
-                              pending_before_delivery_count, pending_after_delivery_count)
+                              pending_before_delivery_count, pending_after_delivery_count,
+                              suppress_cutover_cohort, cutover_backlog_suppressed_count)
     finally:
         store.close()
