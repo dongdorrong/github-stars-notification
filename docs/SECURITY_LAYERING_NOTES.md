@@ -1,6 +1,6 @@
 # Security layering notes — Kubernetes Intelligence
 
-> 적용 범위: P0 Release는 운영 중, P1/P2 코드는 feature branch에서 검증 중이다. 최종 HEAD PR CI·원격 preview, 운영 shadow/canary/full 증거가 나오기 전까지 배포 완료나 live integration 성공을 주장하지 않는다.
+> 적용 범위: P0 Release는 운영 중, P1/P2의 feature branch 검증 증거는 [PR #15](https://github.com/dongdorrong/github-stars-notification/pull/15)의 정확한 HEAD 기준으로 확인한다. 최종 HEAD PR CI·원격 preview, 운영 shadow/canary/full 증거가 나오기 전까지 배포 완료나 live integration 성공을 주장하지 않는다.
 
 ## 1. GitHub Actions와 API 경계
 

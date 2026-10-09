@@ -51,9 +51,9 @@ PR 병합만으로 #3을 닫지 않는다. main shadow persistence, canary, 운�
 
 Adapter는 GitHub REST `X-GitHub-Api-Version: 2022-11-28`을 보낸다. Global GHSA `GET /advisories`는 `modified` 필터와 pagination, Repository GHSA `GET /repos/{owner}/{repo}/security-advisories`는 별도 권한/능력에 의존한다. Issues는 `GET /repos/{owner}/{repo}/issues`의 `since`, `sort=updated`, Link pagination을 사용한다. Discussions는 읽기 전용 GraphQL query의 `UPDATED_AT` 순서와 `pageInfo` cursor를 쓴다. GitHub 403은 권한 또는 rate limit일 수 있어 안전 범주로 구분하고 raw body/URL/토큰을 기록하지 않는다. Slack incoming webhook은 HTTP 429의 `Retry-After`(초)를 존중한다. 현재 공식 문서: [Global GHSA](https://docs.github.com/en/rest/security-advisories/global-advisories?apiVersion=2022-11-28), [Repository GHSA](https://docs.github.com/en/rest/security-advisories/repository-advisories?apiVersion=2022-11-28), [REST Issues](https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28), [GraphQL Discussions](https://docs.github.com/en/graphql/guides/using-the-graphql-api-for-discussions), [REST pagination](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api), [Slack rate limits](https://docs.slack.dev/apis/web-api/rate-limits/).
 
-## 현재 미검증 사항
+## 검증 증거와 운영 미검증 사항
 
-- 이 feature branch의 **최종 HEAD** 원격 preview/PR CI 결론과 수치는 별도 evidence가 아직 필요하다. 실행되지 않은 stage 1~5를 완료로 표기하지 않는다.
+- 이 feature branch의 **최종 HEAD** 원격 preview/PR CI 결론·SHA·수치는 [integration PR #15](https://github.com/dongdorrong/github-stars-notification/pull/15)의 Remote evidence에서 확인한다. 이전 SHA의 성공을 최신 HEAD 증거로 대체하지 않는다. 실행되지 않은 stage 1~5를 완료로 표기하지 않는다.
 - 선택적 Repository GHSA, opt-in Discussion/Issue/RSS의 live 권한·응답·운영 지연은 fixture만으로 보장할 수 없다. 공개 preview에서 해당 source가 꺼져 있으면 특히 live capability는 미검증이다.
 - 실제 로컬 LLM endpoint 품질·가용성 및 운영 Slack ack는 안전 제어 때문에 이번 작업에서 실행하지 않는다. 허가된 stage 3에서만 검증한다.
 - GitHub Actions cache eviction, source API 정렬/수정 지연, 아카이브 이동·rename, private destination 실제 접근 제어는 운영 잔여 위험이다.

@@ -1,6 +1,6 @@
 # AI Project Context — GitHub Stars Kubernetes Intelligence
 
-> 구현 handoff: P0 Release 경로는 기존 운영 기준이다. P1/P2(#7~#12) 코드는 이 feature branch에 추가 중이나 최종 HEAD 원격 preview, PR CI, main shadow/canary/full 운영은 별도 증거 전까지 **미검증**이다. 설계와 운영 완료를 혼동하지 않는다.
+> 구현 handoff: P0 Release 경로는 기존 운영 기준이다. P1/P2(#7~#12) 구현과 최종 HEAD 원격 preview·PR CI 증거는 [PR #15](https://github.com/dongdorrong/github-stars-notification/pull/15)에서 추적한다. main shadow/canary/full 운영은 아직 **미검증**이며 실행 승인도 없다. 설계와 운영 완료를 혼동하지 않는다.
 
 ## 목적·권위 경계
 
