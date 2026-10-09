@@ -1,299 +1,88 @@
 # AI Project Context — GitHub Stars Release Notification
 
-> 이 문서는 다른 OMX/Codex 세션이 `/home/dongdorrong/github/private/github-stars-notification` 프로젝트를 빠르게 이해하고, 다른 레포지토리/애플리케이션과 연동 작업을 이어가기 위한 handoff 문서다.
+> 다른 세션·프로젝트가 이 저장소의 **현재 P0 Release 경로**를 이해하기 위한 handoff 문서다. 목표 설계와 구현 완료 범위를 혼동하지 않는다.
 
-## 1. 프로젝트 한 줄 요약
+## 1. 목적과 구현 범위
 
-GitHub에서 star한 저장소 목록을 조회하고, 각 저장소의 최신 GitHub Release 변화를 감지해 정책에 맞으면 Slack으로 알림을 보내며, 다른 앱/로컬 LLM이 재사용할 수 있는 deterministic release feed를 남기는 자동화 repo다.
+GitHub에서 star한 저장소의 Release를 주기적으로 수집하고, 결정적 정책에 따라 Slack에 알린다. P0(#4~#6)는 GitHub Release ID를 event identity로 사용하고 SQLite event/outbox를 통해 pending 누적·실패 재시도·preview 안전성을 제공한다. Kubernetes project registry, GHSA, 로컬 LLM 분석, Critical/High/Digest routing, maintainer announcements, 공개 Knowledge visibility 강화는 #7~#12의 후속 범위다.
 
-## 2. 현재 목적
+## 2. 핵심 파일
 
-- GitHub starred repositories의 release 변화를 주기적으로 확인한다.
-- `.cache/releases.json`과 비교해 중복 알림을 막는다.
-- 새 release가 `config.yaml`의 정책을 만족하면 Slack으로 사람이 읽기 쉬운 메시지를 보낸다.
-- `config.yaml`에 등록한 관심 프로젝트는 Slack 메시지에서 `⭐`로 강조하고, 정책상 5개 미만이어도 바로 알릴 수 있다.
-- `.cache/release-feed.json`을 생성해 향후 다른 프로젝트/애플리케이션, SQLite/PostgreSQL, 로컬 LLM 요약 파이프라인으로 확장할 수 있게 한다.
-- 전체 starred repository 메타데이터를 `.cache/stars-inventory.json`으로 만들고 `starred-inventory` artifact로 남겨 분류/재점검 입력으로 재사용한다.
-- `fordongdorrong` 주도 RAG/Knowledge Store 전환 TODO는 `docs/rag-todo.md`를 기준으로 한다.
-
-## 3. Repo 구조
-
-```text
-/home/dongdorrong/github/private/github-stars-notification/
-├── .gitignore
-├── AGENTS.md
-├── README.md
-├── config.yaml
-├── docs/
-│   ├── AI_PROJECT_CONTEXT.md
-│   └── GITHUB_MCP_LOCAL_LLM.md
-├── images/
-│   └── sample.png
-├── tests/
-│   └── test_check_release.py
-└── .github/
-    ├── scripts/
-    │   ├── check_release.py
-    │   └── requirements.txt
-    └── workflows/
-        └── notify-starred-releases.yml
-```
-
-## 4. 핵심 파일별 역할
-
-| 파일 | 역할 |
+| 경로 | 역할 |
 | --- | --- |
-| `README.md` | 사용자용 프로젝트 설명, secrets 설정, 정책, 로컬 테스트, feed/LLM 연결 설명 |
-| `AGENTS.md` | repo-local AI 작업 원칙과 안전 경계 |
-| `config.yaml` | 관심 프로젝트, 알림 정책, feed 경로, LLM 역할 경계 설정 |
-| `docs/AI_PROJECT_CONTEXT.md` | 다른 세션/레포 연동용 handoff 문서 |
-| `docs/GITHUB_MCP_LOCAL_LLM.md` | GitHub MCP + 로컬 LLM 연동 결론과 안전 경계 |
-| `docs/SECURITY_LAYERING_NOTES.md` | 치명 보안 조치 결과와 레이어별 후속 작업 코멘트 |
-| `.github/workflows/notify-starred-releases.yml` | GitHub Actions 실행 트리거, dependency 설치, star 목록 조회, release 감지, Slack 전송, feed artifact 업로드 |
-| `.github/scripts/check_release.py` | release 조회, cache 비교, 알림 정책 판단, Slack payload 및 release feed 생성 |
-| `.github/scripts/requirements.txt` | `PyYAML`, `PyGithub` 버전 pin. `requests`는 직접 사용하지 않아 제거됨 |
-| `tests/test_check_release.py` | token 없이 핵심 정책/캐시/feed 동작을 검증하는 unittest |
-| `.gitignore` | `.cache/`, `repos.txt`, `.env`, Python runtime artifact 제외 |
+| `.github/workflows/notify-starred-releases.yml` | schedule/dispatch mode, inventory 수집, cache restore/save, Slack secret 경계, concurrency |
+| `.github/scripts/check_release.py` | 호환 CLI, config, feed/output, pipeline 실행 |
+| `starwatch/release_collector.py` | live/fixture Release 목록 수집과 ID 정규화 |
+| `starwatch/event_store.py` | SQLite schema, event/outbox 상태, transaction, lease·ack |
+| `starwatch/pipeline.py` | legacy 기준선, 수집·저장·선택·전달 orchestration |
+| `starwatch/policy.py`, `starwatch/notifier.py`, `starwatch/slack_payload.py` | pending 선택, Slack 응답, 순수 payload 생성 |
+| `config.yaml` | 관심 프로젝트와 알림 정책. `owner / repo` 표기는 `owner/repo`로 정규화 |
+| `docs/P0_RUNBOOK.md` | 운영·마이그레이션·복구·잔여 위험 |
+| `tests/` | token-free fixture 및 상태 전이 회귀 테스트 |
 
-## 5. Workflow 실제 흐름
+## 3. 현재 실행 흐름
 
-현재 workflow 파일 기준:
+1. workflow가 `gh api /user/starred --paginate`로 starred repository 목록과 inventory를 로컬 파일에 만든다.
+2. Release collector가 최근 페이지를 bounded scan하고 저장된 reconciliation 진행 상태로 과거/backdated Release를 후속 실행에서 재확인한다. 한 실행에서 모든 과거 페이지를 읽지는 않는다. GitHub Release ID(`github:release:<id>`)로 중복을 제거한다. 저장소별 API 오류는 다른 저장소와 분리한다. 실패한 page의 부분 결과는 버리되 이전에 완료한 page의 event는 보존하며 실패 page의 cursor는 전진시키지 않는다. 격리된 HTTP 404/429/5xx가 **시작한 저장소 중** 50% 이하이고 최소 한 저장소가 완료됐다면 exit 0이다. 오류 또는 deferred가 있으면 `collection_degraded: true`다. 401/403, 미분류 오류, 과반 실패, 완료 저장소 0건은 exit 1이며 Slack을 억제한다.
+3. pipeline이 `.cache/events.sqlite3`의 `events`와 `notification_outbox`를 갱신한다. `.cache/releases.json`은 매번 read-only로 검증하되 ID가 없는 과거 기준선은 DB marker에 따라 최초 저장소 초기화에만 적용하며 원본을 보존한다.
+4. `min_release_count`는 실행별 신규 건수가 아니라 미전달 pending 누적 수에 적용된다. 특별 프로젝트가 pending이면 현재 정책상 즉시 후보가 된다.
+5. commit + `--send-slack`이면 Python notifier가 Slack을 호출한다. 2xx 확인 후 해당 chunk의 event만 `DELIVERED`로 갱신한다. 429/5xx/timeout은 실패 상태와 재시도 metadata를 남긴다.
+6. `.cache/release-feed.json`을 로컬에 만든다. Workflow는 inventory/feed를 artifact로 업로드하지 않는다.
 
-```yaml
-on:
-  schedule:
-    - cron: '0 23 * * *'
-    - cron: '0 5 * * *'
-    - cron: '0 8 * * *'
-  workflow_dispatch:
-    inputs:
-      send_slack:
-        type: boolean
-        default: false
-```
+Feed schema v1의 배열은 분리된 계약이다.
 
-주의:
-
-- cron은 GitHub Actions 기준 UTC다.
-- 현재 값은 **매일 한국시간 08:00, 14:00, 17:00** 실행이다.
-
-실행 단계:
-
-1. `actions/checkout@v4`
-2. `actions/setup-python@v5` with `python-version: '3.x'`
-3. `.github/scripts/requirements.txt` 설치
-4. `.cache` restore/save 준비 (`actions/cache@v4`, run별 key + restore prefix)
-5. `gh api /user/starred --paginate` 결과에서 전체 metadata inventory를 `.cache/stars-inventory.json`으로 만들고 `repos.txt`를 파생한다.
-6. `python .github/scripts/check_release.py`
-7. `repos.txt` + `.cache/stars-inventory.json`을 `starred-inventory` artifact로 업로드한다.
-8. `.cache/release-feed.json`을 `release-feed` artifact로 업로드한다.
-9. GitHub Step Summary에 전체 star 수와 release 감지 결과를 기록한다.
-10. 정기 실행에서 `has_new=true`이면 Slack을 전송한다. 수동 실행은 `send_slack=true`를 명시한 경우에만 Slack을 전송한다.
-
-## 6. Script 동작 상세
-
-스크립트: `.github/scripts/check_release.py`
-
-입력:
-
-- `GH_TOKEN`: GitHub API token. fixture 테스트가 아니면 필수
-- `GITHUB_OUTPUT`: GitHub Actions output file path. 로컬에서는 `--github-output`로 대체 가능
-- `repos.txt`: workflow의 “List starred repos” step에서 생성
-- `config.yaml`: 관심 프로젝트/알림/feed/LLM 설정
-- `.cache/releases.json`: 이전 release state cache
-- 선택: `--fixture-releases <json>`으로 token 없는 로컬 테스트 가능
-
-출력:
-
-- GitHub Actions outputs
-  - `has_new=true|false`
-  - `payloads=<Slack payload json array>`
-  - `message_count=<count>`
-  - `feed_path=<path>`
-  - `release_count=<count>`
-  - `special_release_count=<count>`
-  - `notify_reason=<reason>`
-- `.cache/releases.json` 갱신
-- `.cache/release-feed.json` 생성
-- 알림을 보낸 경우 `.cache/last_notification.txt` 갱신
-
-주요 함수/개념:
-
-| 함수/개념 | 역할 |
+| 필드 | 의미 |
 | --- | --- |
-| `normalize_repo_name` | `owner / repo`를 `owner/repo`로 normalize |
-| `load_config` | `config.yaml` 로드, 기본값 merge, 정책값 normalize |
-| `get_github_release_fetcher` | PyGithub 기반 live release fetcher 생성 |
-| `load_fixture_fetcher` | JSON fixture 기반 token-free fetcher 생성 |
-| `detect_releases` | 현재 latest release를 cache와 비교해 새 release만 추림 |
-| `decide_notification` | `min_release_count`, `special_project_always_notify`, `first_run_notify` 정책 적용 |
-| `build_slack_payloads` | Slack text payload 생성 및 길이 기준 분할 |
-| `build_release_feed` | 앱/로컬 LLM 연동용 deterministic JSON feed 생성 |
+| `new_releases[]`, `new_release_count` | 이번 실행에서 처음 발견한 event. 기존 `releases[]`/`release_count`의 고정 alias이며 Slack 상태에 따라 의미가 달라지지 않는다. Knowledge exporter는 이 discovery alias만 읽는다. |
+| `pending_releases[]`, `pending_release_count` | 전송 전 선택 가능한 pending. 지연 재시도 중인 event는 제외한다. |
+| `notification_batch[]`, `notification_batch_count` | `slack_chunks[].event_ids`와 순서까지 일치하는 생성 알림 batch. LLM의 현재 알림 분석 입력이다. |
+| `pending_count` | 지연 재시도를 포함한 **전송 후** 미전달 수. `pending_before_delivery_count`는 같은 기준의 전송 전 수다. |
 
-첫 실행 동작:
+Feed와 Step Summary는 `repositories_total/started/completed/deferred`, 별도 `reconciliation_deferred`, `pages_fetched`, `releases_observed`, `new_release_count`, `elapsed_seconds`, `collection_budget_exhausted`, `collection_success_count`, `collection_error_count`, `collection_degraded`, `collector_errors_by_type`에 대응하는 수집 통계와 안전한 HTTP 범주를 남긴다. 진행 로그는 저장소 실명을 쓰지 않고 실행별 ordinal과 짧은 keyed reference를 사용한다. 오류 응답 본문·헤더·토큰·요청 URL은 남기지 않는다. 로컬 feed의 Release body/title/URL은 여전히 untrusted input이며 public/private 필터링도 보장하지 않는다.
 
-- `.cache/releases.json`이 없으면 `first_run=True`.
-- latest release가 있는 모든 starred repo가 새 release 후보가 된다.
-- `notification.first_run_notify=false`이면 캐시와 feed만 만들고 Slack은 보내지 않는다.
-- 기본값은 기존 동작과 맞춰 `first_run_notify=true`다.
+Draft는 알림 대상에서 제외하며, prerelease는 metadata를 보존하고 현재 Release 정책에 포함한다. Live Release에는 숫자 ID가 필수다. 기존 ID 없는 fixture만 deterministic fixture 전용 fallback ID를 사용한다.
 
-중복 방지:
+## 4. 모드와 GitHub Actions
 
-- 일반 실행에서는 repo별 이전 `tag` 또는 `published`가 달라진 경우만 새 release로 본다.
-- 새 릴리스가 임계값 미만이라 Slack을 보내지 않아도 cache는 갱신되므로, 같은 release가 다음 실행에서 반복 알림 후보가 되지 않는다.
-
-## 7. 현재 설정 파일
-
-`config.yaml`의 핵심 설정:
-
-```yaml
-special_projects:
-  - "kubernetes / kubernetes"
-  - "grafana/grafana"
-  - "argoproj / argo-cd"
-  - "kubernetes-sigs / karpenter"
-  - "kubernetes-sigs / aws-load-balancer-controller"
-  - "aws / amazon-vpc-cni-k8s"
-  - "etcd-io / etcd"
-  - "istio / istio"
-
-notification:
-  min_release_count: 5
-  special_project_always_notify: true
-  first_run_notify: true
-  max_slack_text_length: 35000
-
-feed:
-  output_path: ".cache/release-feed.json"
-
-llm:
-  enabled: false
-  provider: "local"
-  role: "summarize_and_prioritize_only"
-```
-
-## 8. Secrets / 인증 경계
-
-필수 GitHub Repository Secrets:
-
-| Secret | 용도 |
+| 실행 | 동작 |
 | --- | --- |
-| `GH_PAT` | `gh api /user/starred` 및 PyGithub API 호출 |
-| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL |
+| CLI 기본 `--mode preview` | 기존 DB를 메모리 복사본으로 읽고 수집·feed preview. 운영 DB/outbox/legacy cache/last notification 불변, Slack 0회 |
+| CLI `--mode commit` | DB/event/outbox/migration metadata 갱신. `--send-slack` 지정 시 정책 후보를 실제 전송 |
+| schedule | UTC `23:00`, `05:00`, `08:00`; commit + Slack |
+| `workflow_dispatch` | 기본 preview; commit은 기본 브랜치에서만 허용 |
 
-주의:
+Workflow는 `contents: read`, 고정 concurrency group, `cancel-in-progress: false`, job timeout을 사용한다. Preview는 DB cache를 restore해 읽을 수 있지만 새 state cache를 저장하지 않으며 Slack secret을 주입받지 않는다. Commit은 legacy cache를 read-only로 restore하고 별도 DB cache namespace에 유효한 SQLite 파일을 저장한다. Slack 실패로 step이 실패해도 유효한 DB라면 save를 시도한다.
 
-- 실제 token/webhook 값은 절대 repo에 커밋하지 않는다.
-- `.env`가 필요하면 `.gitignore`에 의해 제외된다. 그래도 shell history와 파일 권한에 주의한다.
-- 다른 레포지토리와 연동할 때도 secret은 각 실행 환경의 secret store를 사용한다.
+Collector 기본값은 `per_page: 100`, recent 일반/관심 최대 3/5 page, 새 저장소 bootstrap 1 page, 알려진 ID만 있는 page 1개에서 recent 경로 중단, 전체/저장소 예산 900/60초다. 초기화된 저장소의 과거 reconciliation은 일반 8회 중 1회에 최대 2 page, 관심 프로젝트 2회 중 1회에 최대 4 page를 확인하며 한 실행의 deep scan 대상은 최대 10개 저장소다. `collector_next_repo_index`, `reconcile_visit:<repo>`, `reconciliation_cursor:<repo>`가 공정한 재개와 한 page overlap을 보존한다. Preview는 이 metadata를 운영 DB에 저장하지 않는다. 세부 예산·복구 기준은 [P0 런북](P0_RUNBOOK.md)에 있다.
 
-## 9. GitHub MCP + 로컬 LLM 결론
+CLI의 `--sleep-seconds`/`--no-sleep`은 이전 호출과의 호환을 위한 deprecated no-op이며 새 collector의 repository pacing을 조정하지 않는다.
 
-이 프로젝트는 GitHub MCP와 로컬 LLM을 붙이기 좋은 구조지만, 역할을 분리해야 안전하다.
+Actions cache는 **영구 상태 저장소가 아니다**. Eviction/stale restore/save 실패나 Slack 성공 직후 DB ack·cache save 전에 종료되면 중복 또는 상태 소실이 생길 수 있다. Concurrency는 실행 중인 run을 직렬화하지만 대기 run의 실행 순서·모두 실행됨을 보장하지 않는다. 따라서 이 구현은 exactly-once가 아니다.
 
-- GitHub MCP: starred repositories, repo metadata, workflow/release context를 읽는 선택적 수집면
-- Python: cache/state/duplicate detection/notification policy의 source of truth
-- Local LLM: release feed를 읽고 요약/분류/우선순위/문장 다듬기만 수행
+## 5. 첫 실행과 migration
 
-구체 설계와 로컬 Docker 예시는 `docs/GITHUB_MCP_LOCAL_LLM.md`에 있다.
+- `notification.first_run_notify` 기본값은 `false`다. cache miss나 처음 보는 repository의 기존 Release를 baseline으로 기록하고 대량 Slack 전송을 막는다.
+- 기존 `.cache/releases.json`의 repo/tag/published는 과거 event ID가 아니라 migration 경계값이다. 최초 migration은 그 실행의 수집 성공 여부와 무관하게 **모든 legacy 저장소**의 published cutoff를 `legacy_cutover_published_at:<repo>`에 기록한다. 실패·deferred 저장소도 이후 첫 수집에 이 경계를 사용하며 legacy 파일이 없어져도 유지된다. 전역 migration marker만 있는 기존 P0 DB에서 미초기화 저장소의 cutoff가 빠졌다면 legacy 파일이 남아 있을 때만 보충할 수 있다. 파일과 metadata가 모두 없으면 원래 경계를 복원할 수 없다. Legacy 파일이 있는 첫 cutover 실행은 Slack을 보내지 않는다. Legacy 파일이 없고 `first_run_notify: true`를 명시한 경우 첫 inventory 알림은 가능하며 bootstrap 억제 경계를 설정하지 않는다.
+- `notification.cutover_pending_policy` 기본값은 `suppress_existing`이다. Legacy 파일이 있고 `legacy_migrated` marker와 기존 event row가 없는 최초 전환 실행에서 발견한 모든 Release를 저장하되 `SUPPRESSED`로 처리한다. `first_run_notify: true`도 이 cutover 억제를 우회하지 않는다. Preview는 메모리에서 같은 정책을 적용할 뿐 marker/state를 저장하지 않는다. 다음 실행의 신규 Release는 기존 결정적 pending 정책을 따르며, 이미 migration을 마친 DB의 pending/retry/delivered를 소급 변경하지 않는다. 명시적 `preserve_pending`은 이전 legacy 날짜 경계 동작을 유지한다.
+- malformed legacy cache나 SQLite DB/schema는 빈 상태로 자동 대체하지 않고 실패한다. 원본 cache는 삭제·덮어쓰지 않는다.
+- 기본 브랜치 운영 rollout 및 rollback은 [P0 런북](P0_RUNBOOK.md)의 백업·대조 절차를 따른다. 오래된 legacy cache만으로 이전 workflow를 바로 재가동하면 중복 알림 위험이 있다.
 
-## 10. 다른 레포지토리/애플리케이션과 연동할 때의 경계
+## 6. 연동과 보안 경계
 
-### 읽기 source
+- `GH_PAT`와 `SLACK_WEBHOOK_URL`은 workflow Secrets 또는 실행 환경에서만 주입한다. 파일·로그·artifact·커밋에 값을 남기지 않는다.
+- Python/SQLite가 신규·중복·전달 여부의 source of truth다. GitHub MCP는 선택적 read-only 수집면이다. LLM은 요약·분류·권고 초안만 만들며 상태 변경, Slack 전송, 정책 override를 하지 않는다.
+- `.cache/release-feed.json`은 로컬 신뢰 경계에 남긴다. `scripts/export_knowledge_jsonl.py`는 현재 private/public 판별 없이 visibility를 표시할 수 있으므로 public-only 입력을 확인하지 않은 feed를 공개 Knowledge Store로 보내지 않는다(#12 후속).
+- GitHub Release title/body/URL은 외부 저장소 작성자가 제어할 수 있는 데이터다. Shell code에 직접 expression으로 삽입하거나 LLM 지시로 취급하지 않는다.
 
-- starred repo 목록: 현재 GitHub CLI `gh api /user/starred`, 향후 GitHub MCP `list_starred_repositories` 가능
-- latest release: 현재 PyGithub `get_latest_release()`
-- 관심 프로젝트/정책: `config.yaml`
-- 이전 상태: `.cache/releases.json`, 향후 SQLite/PostgreSQL event store 가능
-- release feed: `.cache/release-feed.json`
+## 7. 검증
 
-### 쓰기 output
-
-- 현재: Slack webhook
-- 현재: GitHub Actions artifact `release-feed`
-- 향후 후보:
-  - SQLite/PostgreSQL release history table
-  - 웹 UI/API용 release feed
-  - Discord/Email/Notion/Velog 등 추가 채널
-  - LLM 요약 결과 저장소(`llm_summary` 등 별도 필드/테이블)
-
-### 권장 확장 방향
-
-- release event 원본과 LLM 요약 결과를 분리한다.
-- Slack output은 notifier adapter로 더 분리할 수 있다.
-- 관심 프로젝트는 YAML 파일뿐 아니라 DB/API에서 관리할 수 있게 확장할 수 있다.
-- cache file이 커지거나 여러 앱이 동시에 읽게 되면 SQLite/PostgreSQL로 state store를 옮긴다.
-
-## 11. 로컬 검증 명령
-
-문법 확인:
+저장소 루트에서 다음 명령을 실행한다. Fixture smoke command와 운영 절차는 [P0 런북](P0_RUNBOOK.md)에 있다.
 
 ```bash
-cd /home/dongdorrong/github/private/github-stars-notification
 python3 -m py_compile .github/scripts/check_release.py
-```
-
-단위 테스트:
-
-```bash
+python3 -m compileall -q .github/scripts starwatch
 python3 -m unittest discover -s tests -v
+git diff --check
 ```
 
-fixture smoke test:
-
-```bash
-cat > /tmp/repos.txt <<'EOF'
-grafana / grafana
-other/repo
-EOF
-
-cat > /tmp/releases.json <<'EOF'
-{
-  "grafana/grafana": {
-    "tag_name": "v12.0.0",
-    "name": "Release v12.0.0",
-    "published_at": "2026-06-20 10:00:00",
-    "html_url": "https://github.com/grafana/grafana/releases/tag/v12.0.0"
-  }
-}
-EOF
-
-python3 .github/scripts/check_release.py \
-  --repos-file /tmp/repos.txt \
-  --fixture-releases /tmp/releases.json \
-  --cache-path /tmp/releases-cache.json \
-  --feed-path /tmp/release-feed.json \
-  --github-output /tmp/github-output.txt \
-  --no-sleep
-```
-
-실제 script 실행에는 아래가 필요하다.
-
-```bash
-export GH_TOKEN=...
-export GITHUB_OUTPUT=/tmp/github-output.txt
-gh api /user/starred --paginate | jq -r '.[].full_name' > repos.txt
-python3 .github/scripts/check_release.py
-```
-
-## 12. 다음 세션에서 먼저 할 일
-
-다른 OMX/Codex 세션이 시작하면 아래를 먼저 확인한다.
-
-```bash
-cd /home/dongdorrong/github/private/github-stars-notification
-git status --short --branch
-sed -n '1,220p' AGENTS.md
-sed -n '1,320p' docs/AI_PROJECT_CONTEXT.md
-sed -n '1,260p' docs/GITHUB_MCP_LOCAL_LLM.md
-sed -n '1,220p' docs/SECURITY_LAYERING_NOTES.md
-python3 -m py_compile .github/scripts/check_release.py
-python3 -m unittest discover -s tests -v
-```
-
-workflow를 바꾸는 작업이면 추가로:
-
-```bash
-sed -n '1,240p' .github/workflows/notify-starred-releases.yml
-sed -n '1,360p' .github/scripts/check_release.py
-```
+실제 Slack webhook이나 운영 commit-mode workflow는 회귀 검증에 사용하지 않는다. Fake transport를 주입한 fixture 테스트로 성공·429·500·부분 실패·재시도를 확인한다.

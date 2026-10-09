@@ -1,6 +1,6 @@
 # AGENTS.md — github-stars-notification repo local guidance
 
-이 저장소는 GitHub에서 사용자가 star한 저장소들의 최신 release를 감지하고 Slack으로 알림을 보내는 GitHub Actions 기반 자동화 프로젝트다. 다른 OMX/Codex 세션은 먼저 `docs/AI_PROJECT_CONTEXT.md`와 Kubernetes Intelligence 설계 문서를 읽고 작업한다.
+이 저장소는 GitHub에서 사용자가 star한 저장소들의 Release를 수집하고 Slack으로 알림을 보내는 GitHub Actions 기반 자동화 프로젝트다. 다른 OMX/Codex 세션은 먼저 `docs/AI_PROJECT_CONTEXT.md`와 Kubernetes Intelligence 설계 문서를 읽고 작업한다.
 
 ## 기본 언어와 톤
 
@@ -12,7 +12,6 @@
 
 | 목적 | 경로 |
 | --- | --- |
-| 프로젝트 루트 | `/home/dongdorrong/github/private/github-stars-notification` |
 | GitHub Actions workflow | `.github/workflows/notify-starred-releases.yml` |
 | release 감지/정책/Feed 스크립트 | `.github/scripts/check_release.py` |
 | Python dependency pin | `.github/scripts/requirements.txt` |
@@ -22,6 +21,7 @@
 | Kubernetes Intelligence 로드맵 | `docs/KUBERNETES_INTELLIGENCE_ROADMAP.md` |
 | 상태·AI 경계 ADR | `docs/adr/0001-deterministic-event-state-and-ai-boundary.md` |
 | P0 Codex UltraGoal | `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md` |
+| P0 운영/마이그레이션 런북 | `docs/P0_RUNBOOK.md` |
 | GitHub MCP + 로컬 LLM 설계 | `docs/GITHUB_MCP_LOCAL_LLM.md` |
 | 보안 레이어 후속 조치 | `docs/SECURITY_LAYERING_NOTES.md` |
 | 테스트 | `tests/test_check_release.py`, `tests/test_knowledge_export.py` |
@@ -29,14 +29,13 @@
 ## 현재 동작 요약
 
 1. GitHub Actions가 `gh api /user/starred --paginate`로 star 저장소 목록을 `repos.txt`에 저장한다.
-2. `.github/scripts/check_release.py`가 각 저장소의 latest release를 조회한다.
-3. `.cache/releases.json`과 비교해 새 release만 추린다.
-4. `config.yaml`의 `notification` 정책으로 Slack 전송 여부를 결정한다.
-5. Slack payload와 `.cache/release-feed.json`을 생성한다.
-6. `has_new=true`이면 workflow가 `SLACK_WEBHOOK_URL`로 Slack 메시지를 보낸다.
-7. workflow는 `release-feed` artifact를 업로드해 다른 앱/세션이 결과를 재사용할 수 있게 한다.
+2. Release collector가 저장소별 최근 목록을 bounded pagination으로 수집하고, 저장된 reconciliation 진행 상태로 과거 페이지를 점진적으로 재확인한다. GitHub Release ID로 중복을 제거하며 한 실행의 전체 이력 확인을 주장하지 않는다.
+3. `check_release.py`의 commit mode는 `.cache/events.sqlite3`의 event/outbox를 갱신한다. 기존 `.cache/releases.json`은 삭제·덮어쓰기 없이 마이그레이션 기준선으로만 읽는다. 최초 legacy cutover의 기본 `notification.cutover_pending_policy: suppress_existing`은 그 실행에서 발견한 기존 Release를 `SUPPRESSED`로 저장하며 이후 신규 event는 정상 pending 정책을 따른다.
+4. 임계값 미만 event는 outbox에 남아 다음 실행까지 누적된다. Slack 2xx 확인 후에만 delivered로 바뀌며 429/5xx/timeout은 재시도 대상이다.
+5. 수동 실행의 기본 preview는 수집 결과·feed를 보여주되 event DB, outbox, legacy cache, last notification을 변경하거나 Slack을 호출하지 않는다.
+6. workflow는 private starred repository 정보 노출 위험 때문에 inventory와 release feed를 artifact로 업로드하지 않는다. CLI가 만드는 로컬 feed는 신뢰할 수 있는 소비자만 사용한다.
 
-이 절은 **현재 구현**이다. Kubernetes Intelligence 문서는 목표 아키텍처와 백로그이며, 구현되지 않은 기능을 현재 동작으로 가정하면 안 된다.
+이 절은 **P0 Release 경로**만 설명한다. GHSA, registry, AI 분석, Critical/High/Digest routing, public visibility filtering은 후속 이슈 #7~#12이며 현재 구현으로 가정하지 않는다. 정확한 운영·복구 절차는 `docs/P0_RUNBOOK.md`를 따른다.
 
 ## Kubernetes Intelligence 목표
 
@@ -55,18 +54,18 @@ starred inventory
 우선순위:
 
 - P0 #4: durable event/outbox와 no-loss delivery
-- P0 #5: 모든 unseen Release incremental 수집
+- P0 #5: 최근 Release incremental 수집과 과거/backdated Release의 점진적 reconciliation
 - P0 #6: preview/concurrency/state safety
-- P1 #7~#10: project registry, GHSA, AI analysis, Slack routing
+- P1 #7~#10: project registry, GHSA, AI analysis, 확장 Slack routing
 - P2 #11~#12: maintainer announcements, visibility/Knowledge/CI hardening
 
-P0 작업을 시작할 때는 `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`를 실행 기준으로 사용한다.
+`docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`는 P0 최초 구현의 실행 기록이다. Collector의 현재 bounded scan/reconciliation 계약과 운영 기준은 `docs/P0_RUNBOOK.md` 및 실제 `config.yaml`/코드가 우선한다. 최초 문서의 매 실행 exhaustive scan 설명을 현재 동작으로 인용하지 않는다.
 
 ## 상태와 AI의 강제 경계
 
-- Normalized raw event가 원본 사실의 source of truth다.
+- Normalized raw event가 원본 사실의 source of truth다. P0의 수집 원천은 GitHub Release다.
 - Python/SQLite가 event identity, 중복, outbox, retry, delivered 상태를 소유한다.
-- Slack 2xx 확인 전에는 delivered 처리하지 않는다.
+- Slack 2xx 확인 전에는 delivered 처리하지 않는다. Actions cache는 영구 저장소가 아니므로 exactly-once 보장은 없다.
 - 수동 preview는 운영 state와 Slack을 변경하지 않는다.
 - LLM은 요약, 카테고리, 운영 영향, 확인 권고만 작성한다.
 - LLM은 신규/중복 판정, outbox 상태 변경, Slack 직접 호출, deterministic severity 하향을 수행하지 않는다.
@@ -89,7 +88,7 @@ P0 작업을 시작할 때는 `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`�
 
 ## 작업 원칙
 
-1. workflow 변경 시 `.github/workflows/notify-starred-releases.yml`, README, `docs/AI_PROJECT_CONTEXT.md` 설명을 함께 맞춘다.
+1. workflow 변경 시 `.github/workflows/notify-starred-releases.yml`, README, `docs/AI_PROJECT_CONTEXT.md`, `docs/P0_RUNBOOK.md` 설명을 함께 맞춘다.
 2. script 변경 시 최소 아래를 실행한다.
    ```bash
    python3 -m py_compile .github/scripts/check_release.py
@@ -99,7 +98,7 @@ P0 작업을 시작할 때는 `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`�
 3. `config.yaml`의 repo 표기는 `owner/repo` 또는 `owner / repo`가 섞여 있으며 script가 `owner/repo`로 normalize한다.
 4. 캐시/첫 실행/중복 알림 동작은 민감하다. 수정 시 fixture test와 상태 전이 test를 먼저 추가하거나 갱신한다.
 5. 다른 repo와 연동할 때는 이 프로젝트를 “GitHub official-signal source + deterministic event/outbox + Slack notifier”로 보고, 쓰기 경계와 secret 경계를 분리한다.
-6. P0 migration은 기존 `.cache/releases.json`을 삭제하거나 원본 위에 덮어쓰지 않는다.
+6. P0 migration은 기존 `.cache/releases.json`을 삭제하거나 원본 위에 덮어쓰지 않는다. DB/cache가 malformed이면 빈 상태로 대체하지 말고 fail closed한다.
 7. workspace가 dirty하면 기존 사용자 변경을 건드리지 말고 별도 worktree를 사용한다.
 8. main에 직접 commit하지 않고 feature branch/PR을 사용한다.
 9. 구현되지 않은 roadmap 항목을 완료됐다고 문서화하지 않는다.
@@ -112,7 +111,7 @@ P0 작업을 시작할 때는 `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`�
 - preview 실행은 state mutation과 Slack 전송이 없어야 한다.
 - GitHub MCP를 붙일 때는 가능한 `GITHUB_READ_ONLY=1`과 최소 toolset을 사용한다.
 - 외부 입력을 GitHub Actions inline shell code에 직접 expression 보간하지 않는다.
-- private/internal repository metadata는 public artifact와 Knowledge export에서 기본 제외한다.
+- P0 workflow는 inventory/feed artifact를 업로드하지 않는다. public Knowledge export의 private/internal filtering은 #12 작업 전까지 보장하지 않는다.
 - malformed DB/cache를 자동 빈 state로 교체해 과거 상태를 잃지 않는다.
 
 ## 상세 문서
@@ -122,5 +121,6 @@ P0 작업을 시작할 때는 `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`�
 - 단계별 로드맵: `docs/KUBERNETES_INTELLIGENCE_ROADMAP.md`
 - 상태·AI 결정: `docs/adr/0001-deterministic-event-state-and-ai-boundary.md`
 - Codex P0 실행 프롬프트: `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`
+- P0 운영/마이그레이션: `docs/P0_RUNBOOK.md`
 - GitHub MCP + 로컬 LLM 설계: `docs/GITHUB_MCP_LOCAL_LLM.md`
 - 보안 레이어 후속 조치: `docs/SECURITY_LAYERING_NOTES.md`

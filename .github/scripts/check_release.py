@@ -22,12 +22,20 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+# Direct script invocation puts .github/scripts, not the repository, on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from starwatch.notifier import WebhookTransport
+from starwatch.pipeline import run_pipeline
+from starwatch.release_collector import DEFAULT_COLLECTOR, FixtureReleaseSource, LiveReleaseSource, assess_collection
+
 CACHE_PATH = Path(".cache/releases.json")
+STATE_DB_PATH = Path(".cache/events.sqlite3")
 LAST_NOTIFICATION_PATH = Path(".cache/last_notification.txt")
 REPOS_FILE = Path("repos.txt")
 CONFIG_PATH = Path("config.yaml")
@@ -39,12 +47,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "notification": {
         "min_release_count": 5,
         "special_project_always_notify": True,
-        "first_run_notify": True,
+        "first_run_notify": False,
+        "cutover_pending_policy": "suppress_existing",
         "max_slack_text_length": MAX_TEXT_LENGTH,
     },
     "feed": {
         "output_path": str(FEED_PATH),
     },
+    "collector": DEFAULT_COLLECTOR.copy(),
     "llm": {
         "enabled": False,
         "provider": "local",
@@ -228,11 +238,28 @@ def normalize_config(raw_config: dict[str, Any]) -> dict[str, Any]:
         notification.get("first_run_notify"),
         DEFAULT_CONFIG["notification"]["first_run_notify"],
     )
+    if notification.get("cutover_pending_policy") not in {"suppress_existing", "preserve_pending"}:
+        raise ValueError("notification.cutover_pending_policy must be suppress_existing or preserve_pending")
     notification["max_slack_text_length"] = parse_int(
         notification.get("max_slack_text_length"),
         DEFAULT_CONFIG["notification"]["max_slack_text_length"],
         minimum=1_000,
     )
+
+    collector = config.get("collector")
+    if not isinstance(collector, dict):
+        raise ValueError("collector config must be a mapping")
+    for key in DEFAULT_CONFIG["collector"]:
+        value = collector.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"collector.{key} must be a positive integer")
+    if collector["per_page"] > 100:
+        raise ValueError("collector.per_page must be at most 100")
+    for key in ("reconciliation_pages_per_repo", "reconciliation_pages_special_project"):
+        if collector[key] < 2:
+            raise ValueError(f"collector.{key} must be at least 2 for overlap progress")
+    if collector["global_budget_seconds"] > 1200:
+        raise ValueError("collector.global_budget_seconds must be at most 1200")
 
     feed = config.setdefault("feed", {})
     feed["output_path"] = str(feed.get("output_path") or FEED_PATH)
@@ -569,7 +596,7 @@ def build_release_feed(
                 "send_notifications",
                 "override_notification_policy",
             ],
-            "input_guidance": "Use releases[] as the deterministic source. Treat summaries as advisory text only.",
+            "input_guidance": "Legacy detector output: releases[] is newly detected releases only, not an accumulated notification batch. Treat summaries as advisory text only.",
         },
         "mcp_contract": {
             "role": "optional_read_only_collection_surface",
@@ -586,6 +613,22 @@ def write_github_outputs(
     feed_path: Path,
     release_count: int,
     special_release_count: int,
+    collection_success_count: int = 0,
+    collection_error_count: int = 0,
+    collection_degraded: bool = False,
+    collector_errors_by_type: dict[str, int] | None = None,
+    scanned_repos: int = 0,
+    repositories_total: int = 0,
+    repositories_started: int = 0,
+    repositories_completed: int = 0,
+    repositories_deferred: int = 0,
+    reconciliation_deferred: int = 0,
+    pages_fetched: int = 0,
+    releases_observed: int = 0,
+    elapsed_seconds: float = 0.0,
+    collection_budget_exhausted: bool = False,
+    cutover_policy_applied: bool = False,
+    cutover_backlog_suppressed_count: int = 0,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("a", encoding="utf-8") as output:
@@ -594,8 +637,25 @@ def write_github_outputs(
         output.write(f"payloads={json.dumps(payloads, ensure_ascii=False)}\n")
         output.write(f"feed_path={feed_path}\n")
         output.write(f"release_count={release_count}\n")
+        output.write(f"new_release_count={release_count}\n")
         output.write(f"special_release_count={special_release_count}\n")
         output.write(f"notify_reason={decision.reason}\n")
+        output.write(f"collection_success_count={collection_success_count}\n")
+        output.write(f"scanned_repos={scanned_repos}\n")
+        output.write(f"collection_error_count={collection_error_count}\n")
+        output.write(f"collection_degraded={str(collection_degraded).lower()}\n")
+        output.write(f"collector_errors_by_type={json.dumps(collector_errors_by_type or {}, sort_keys=True)}\n")
+        output.write(f"repositories_total={repositories_total}\n")
+        output.write(f"repositories_started={repositories_started}\n")
+        output.write(f"repositories_completed={repositories_completed}\n")
+        output.write(f"repositories_deferred={repositories_deferred}\n")
+        output.write(f"reconciliation_deferred={reconciliation_deferred}\n")
+        output.write(f"pages_fetched={pages_fetched}\n")
+        output.write(f"releases_observed={releases_observed}\n")
+        output.write(f"elapsed_seconds={elapsed_seconds:.3f}\n")
+        output.write(f"collection_budget_exhausted={str(collection_budget_exhausted).lower()}\n")
+        output.write(f"cutover_policy_applied={str(cutover_policy_applied).lower()}\n")
+        output.write(f"cutover_backlog_suppressed_count={cutover_backlog_suppressed_count}\n")
         if payloads:
             safe = json.dumps(payloads[0], ensure_ascii=False).replace("%", "%25").replace("\n", "%0A").replace("\r", "%0D")
             output.write(f"payload={safe}\n")
@@ -608,73 +668,226 @@ def print_summary(result: DetectionResult, decision: NotificationDecision, feed_
     print(f"DEBUG: First run: {result.first_run}")
     print(f"DEBUG: Notify: {decision.should_notify} ({decision.reason})")
     print(f"DEBUG: Feed path: {feed_path}")
-    for release in result.releases[:5]:
-        marker = " [special]" if release.is_special else ""
-        print(f"  - {release.repo}: {release.tag} ({release.published}){marker}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Detect new releases from GitHub starred repositories.")
     parser.add_argument("--repos-file", type=Path, default=REPOS_FILE)
     parser.add_argument("--cache-path", type=Path, default=CACHE_PATH)
+    parser.add_argument("--state-db", type=Path, default=STATE_DB_PATH)
+    parser.add_argument("--mode", choices=("preview", "commit"), default="preview")
+    parser.add_argument("--send-slack", action="store_true", help="Commit mode only; requires SLACK_WEBHOOK_URL")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--feed-path", type=Path, default=None)
     parser.add_argument("--github-output", type=Path, default=None)
     parser.add_argument("--fixture-releases", type=Path, default=None, help="JSON fixture for token-free local tests")
-    parser.add_argument("--sleep-seconds", type=float, default=0.3)
-    parser.add_argument("--no-sleep", action="store_true")
+    parser.add_argument("--sleep-seconds", type=float, default=None,
+                        help="Deprecated compatibility flag; collector no longer paces repositories")
+    parser.add_argument("--no-sleep", action="store_true",
+                        help="Deprecated compatibility flag; collector no longer paces repositories")
     return parser
 
 
-def run(args: argparse.Namespace) -> int:
+def _assert_safe_outputs(paths: list[Path], protected: list[Path]) -> None:
+    resolved_protected = {path.resolve() for path in protected}
+    for path in paths:
+        if path.resolve() in resolved_protected:
+            raise ValueError("output path aliases protected state")
+        if path.exists():
+            for state in protected:
+                if state.exists() and os.path.samefile(path, state):
+                    raise ValueError("output path aliases protected state")
+
+
+def run(args: argparse.Namespace, transport: Any = None) -> int:
+    if getattr(args, "sleep_seconds", None) is not None or getattr(args, "no_sleep", False):
+        print("WARNING: --sleep-seconds/--no-sleep are deprecated and have no effect", file=sys.stderr)
     config = load_config(args.config)
     feed_path = args.feed_path or Path(config["feed"]["output_path"])
     github_output_env = os.environ.get("GITHUB_OUTPUT")
     output_path = args.github_output or (Path(github_output_env) if github_output_env else None)
-
+    state_path = getattr(args, "state_db", STATE_DB_PATH)
+    mode = getattr(args, "mode", "preview")
+    send_slack = getattr(args, "send_slack", False)
+    protected = [state_path, args.cache_path, args.cache_path.parent / LAST_NOTIFICATION_PATH.name]
+    _assert_safe_outputs([p for p in (feed_path, output_path) if p is not None], protected)
+    if send_slack and mode != "commit":
+        raise ValueError("--send-slack requires --mode commit")
+    if send_slack and args.fixture_releases and transport is None:
+        raise ValueError("fixture runs require an injected fake Slack transport")
     repos = read_repos(args.repos_file)
-    previous_cache = load_cache(args.cache_path)
-    first_run = not args.cache_path.exists()
-    special_projects = set(config["special_projects"])
-
     if args.fixture_releases:
-        fetch_release = load_fixture_fetcher(args.fixture_releases)
+        source = FixtureReleaseSource(args.fixture_releases)
     else:
         token = os.getenv("GH_TOKEN")
         if not token:
             print("GH_TOKEN env required for live GitHub API calls", file=sys.stderr)
             return 1
-        fetch_release = get_github_release_fetcher(token)
+        source = LiveReleaseSource(token, per_page=config["collector"]["per_page"])
+    if send_slack and transport is None:
+        webhook = os.getenv("SLACK_WEBHOOK_URL")
+        if not webhook:
+            raise ValueError("SLACK_WEBHOOK_URL is required for --send-slack")
+        transport = WebhookTransport(webhook)
 
-    result = detect_releases(
+    def safe_progress(progress: dict[str, Any]) -> None:
+        reference = progress.get("reference")
+        status = progress.get("status")
+        ordinal = progress.get("ordinal")
+        total = progress.get("total")
+        pages = progress.get("pages")
+        if (isinstance(reference, str) and re.fullmatch(r"[0-9a-f]{6,32}", reference)
+                and status in {"started", "completed", "deferred", "error"}
+                and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                        for value in (ordinal, total, pages))):
+            print(f"Collector progress: repository={ordinal}/{total} ref={reference} "
+                  f"pages={pages} status={status}", flush=True)
+
+    result = run_pipeline(
+        state_path=state_path,
+        legacy_path=args.cache_path,
         repos=repos,
-        fetch_release=fetch_release,
-        previous_cache=previous_cache,
-        special_projects=special_projects,
-        first_run=first_run,
-        sleep_seconds=0 if args.no_sleep else args.sleep_seconds,
+        source=source,
+        config=config,
+        mode=mode,
+        send_slack=send_slack,
+        transport=transport,
+        progress=safe_progress,
     )
-    decision = decide_notification(result.releases, result.first_run, config)
-    payloads = build_slack_payloads(result.releases, result.first_run, config, decision)
-    feed = build_release_feed(result, decision, payloads, config, args.repos_file, args.cache_path)
+    def feed_release(event: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "repo": event["repository"],
+            "tag": event["tag_name"],
+            "name": event["release_name"],
+            "published": event["published_at"],
+            "html_url": event["html_url"],
+            "is_special": event["is_special"],
+            "event_id": event["event_id"],
+            "release_id": event["release_id"],
+            "prerelease": event["prerelease"],
+        }
 
-    save_cache(result.current_cache, args.cache_path)
+    releases = [feed_release(event) for event in result.new_events]
+    pending_releases = [feed_release(event) for event in result.pending]
+    pending_by_id = {item["event_id"]: item for item in pending_releases}
+    batch_ids = [event_id for chunk in result.chunks for event_id in chunk.event_ids]
+    if len(batch_ids) != len(set(batch_ids)) or any(event_id not in pending_by_id for event_id in batch_ids):
+        raise ValueError("Slack chunk event mapping is invalid")
+    notification_batch = [pending_by_id[event_id] for event_id in batch_ids]
+    slack_chunks = [{"event_ids": chunk.event_ids, "payload": chunk.payload} for chunk in result.chunks]
+    payloads = [chunk.payload for chunk in result.chunks]
+    collector_health = assess_collection(result.collected)
+    collector_errors_by_type = dict(sorted(Counter(
+        f"http_{error.status}" if isinstance(error.status, int) else "collection_error"
+        for error in result.collected.errors
+    ).items()))
+    feed = {
+        "schema_version": "github-stars-release-feed/v1",
+        "generated_at": utc_now(),
+        "source": {
+            "collector": "github-releases",
+            "detector": ".github/scripts/check_release.py",
+            "repos_file": str(args.repos_file),
+            "cache_path": str(args.cache_path),
+            "state_db": str(state_path),
+        },
+        "mode": mode,
+        "first_run": result.first_run,
+        "scanned_repos": result.collected.repositories_scanned,
+        "repositories_total": result.collected.repositories_total,
+        "repositories_started": result.collected.repositories_started,
+        "repositories_completed": result.collected.repositories_completed,
+        "repositories_deferred": result.collected.repositories_deferred,
+        "reconciliation_deferred": result.collected.reconciliation_deferred,
+        "pages_fetched": result.collected.pages_fetched,
+        "releases_observed": result.collected.releases_observed,
+        "elapsed_seconds": round(result.collected.elapsed_seconds, 3),
+        "collection_budget_exhausted": result.collected.collection_budget_exhausted,
+        "repos_with_release": result.collected.repositories_with_release,
+        "collection_error_count": len(result.collected.errors),
+        "collection_success_count": collector_health.success_count,
+        "collection_degraded": collector_health.degraded,
+        "collector_errors_by_type": collector_errors_by_type,
+        "release_count": len(releases),
+        "new_release_count": len(releases),
+        "pending_release_count": len(pending_releases),
+        "notification_batch_count": len(notification_batch),
+        "special_release_count": sum(1 for item in releases if item["is_special"]),
+        "pending_count": result.pending_after_delivery_count,
+        "pending_before_delivery_count": result.pending_before_delivery_count,
+        "cutover_policy_applied": result.cutover_policy_applied,
+        "cutover_backlog_suppressed_count": result.cutover_backlog_suppressed_count,
+        "notify": result.decision.should_notify,
+        "notify_reason": result.decision.reason,
+        "delivery_succeeded": result.delivery_succeeded,
+        "policy": config["notification"],
+        "releases": releases,
+        "new_releases": releases,
+        "pending_releases": pending_releases,
+        "notification_batch": notification_batch,
+        "slack_chunks": slack_chunks,
+        "slack_payload_count": len(payloads),
+        "llm_contract": {
+            "enabled": config["llm"]["enabled"],
+            "provider": config["llm"]["provider"],
+            "allowed_roles": [
+                "summarize_release_notes",
+                "categorize_projects",
+                "score_human_attention_priority",
+                "draft_human_readable_digest",
+            ],
+            "must_not_do": [
+                "decide_new_vs_duplicate",
+                "mutate_cache_or_state",
+                "send_notifications",
+                "override_notification_policy",
+            ],
+            "input_guidance": "Use notification_batch[] for the current notification; new_releases[] is this run's discoveries. Treat summaries as advisory text only.",
+        },
+        "mcp_contract": {
+            "role": "optional_read_only_collection_surface",
+            "recommended_toolsets": ["stargazers", "repos", "actions"],
+            "boundary": "GitHub MCP may collect GitHub context; this script remains the state and notification source of truth.",
+        },
+    }
     write_json_file(feed_path, feed)
-    if decision.should_notify:
-        save_last_notification_time(result.releases, args.cache_path.parent / LAST_NOTIFICATION_PATH.name)
-
     if output_path is not None:
         write_github_outputs(
             output_path=output_path,
-            decision=decision,
+            decision=NotificationDecision(result.decision.should_notify, result.decision.reason),
             payloads=payloads,
             feed_path=feed_path,
-            release_count=len(result.releases),
+            release_count=len(releases),
             special_release_count=feed["special_release_count"],
+            collection_success_count=collector_health.success_count,
+            collection_error_count=len(result.collected.errors),
+            collection_degraded=collector_health.degraded,
+            collector_errors_by_type=collector_errors_by_type,
+            scanned_repos=result.collected.repositories_scanned,
+            repositories_total=result.collected.repositories_total,
+            repositories_started=result.collected.repositories_started,
+            repositories_completed=result.collected.repositories_completed,
+            repositories_deferred=result.collected.repositories_deferred,
+            reconciliation_deferred=result.collected.reconciliation_deferred,
+            pages_fetched=result.collected.pages_fetched,
+            releases_observed=result.collected.releases_observed,
+            elapsed_seconds=result.collected.elapsed_seconds,
+            collection_budget_exhausted=result.collected.collection_budget_exhausted,
+            cutover_policy_applied=result.cutover_policy_applied,
+            cutover_backlog_suppressed_count=result.cutover_backlog_suppressed_count,
         )
-
-    print_summary(result, decision, feed_path)
-    return 0
+    print(f"Repositories: total={result.collected.repositories_total} "
+          f"started={result.collected.repositories_started} completed={result.collected.repositories_completed} "
+          f"deferred={result.collected.repositories_deferred}; pages={result.collected.pages_fetched} "
+          f"reconciliation_deferred={result.collected.reconciliation_deferred} "
+          f"observed={result.collected.releases_observed} new={len(releases)} "
+          f"pending={len(result.pending)} elapsed_seconds={result.collected.elapsed_seconds:.3f} "
+          f"budget_exhausted={str(result.collected.collection_budget_exhausted).lower()} "
+          f"collection_errors={collector_errors_by_type}; notify_reason={result.decision.reason}; mode={mode}")
+    print(f"Cutover: policy_applied={str(result.cutover_policy_applied).lower()} "
+          f"backlog_suppressed={result.cutover_backlog_suppressed_count} "
+          f"pending={result.pending_after_delivery_count}")
+    return 1 if result.delivery_succeeded is False or collector_health.fatal else 0
 
 
 def main() -> None:
@@ -683,7 +896,8 @@ def main() -> None:
     try:
         raise SystemExit(run(args))
     except Exception as exc:  # pragma: no cover - last-resort CLI guard
-        print("ERROR:", exc, file=sys.stderr)
+        # Exception text from APIs and transports can embed credentials/URLs.
+        print(f"ERROR: {type(exc).__name__}; no state was silently reset", file=sys.stderr)
         raise SystemExit(1) from exc
 
 

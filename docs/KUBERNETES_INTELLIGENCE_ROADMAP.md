@@ -3,9 +3,11 @@
 > Epic: #3  
 > Architecture: [KUBERNETES_INTELLIGENCE_ARCHITECTURE.md](KUBERNETES_INTELLIGENCE_ARCHITECTURE.md)
 
+P0(#4~#6)의 구현·운영 경계는 [P0 런북](P0_RUNBOOK.md)을 기준으로 한다. P1/P2(#7~#12)는 아래의 향후 계획이며 P0에서 구현하지 않는다.
+
 ## 1. 목표
 
-현재의 latest Release 기반 알림기를 다음 단계로 안전하게 확장한다.
+기존 latest Release 기반 알림기를 다음 단계로 안전하게 확장한다.
 
 ```text
 Release notification script
@@ -58,14 +60,17 @@ Gate:
 목표:
 
 - `latest_release` 단건 수집 제거
-- cursor 이후 모든 Release 수집
+- 실행 예산 안에서 최근 Release를 bounded incremental 수집하고, 과거/backdated Release를 저장된 reconciliation 진행 상태로 점진적으로 재확인
 - GitHub Release ID 기반 stable identity
 
 Gate:
 
-- 실행 사이 3개 Release가 발생하면 3개 모두 event store에 존재
-- pagination page 2에서도 unseen event를 찾음
+- 실행 사이 3개 Release가 발생하고 최근 scan 예산 안에 있으면 3개 모두 event store에 존재
+- 최근 scan의 page 2 이후와 reconciliation 대상 과거 page에서 unseen event를 찾음. 최근의 known-only page를 전체 이력 완료로 간주하지 않음
+- 시간/page 예산에 도달한 저장소를 deferred로 보고 다음 commit 실행에 공정하게 재개. 실패한 page는 reconciliation cursor를 전진시키지 않음
 - draft/prerelease metadata 보존
+
+현재 P0 기본값은 최근 일반/관심 최대 3/5 page, 새 저장소 bootstrap 1 page, 과거 reconciliation 일반/관심 최대 2/4 page, 한 실행의 deep scan 대상 최대 10개 저장소, 전체/저장소 수집 예산 900/60초다. Reconciliation은 일반 8회 중 1회, 관심 저장소 2회 중 1회 수준으로 저장소별 성공 방문 횟수에 따라 선택한다. 이는 운영 비용과 발견 지연 사이의 절충이며 정상 commit 실행과 state 보존이 이어져야 과거/backdated Release를 점진적으로 찾는다. 한 번의 실행에서 전체 이력을 소진한다는 완료 조건은 아니다. 운영 telemetry와 rollback 절차는 [P0 런북](P0_RUNBOOK.md)에 기록한다.
 
 ### P0-3. Preview / Concurrency / Bootstrap Safety — #6
 
@@ -99,9 +104,9 @@ Gate:
 
 ### P0 완료 후 유지해야 할 호환성
 
-- 기존 `config.yaml`의 `special_projects`는 초기 project registry로 migration 가능해야 한다.
+- 기존 `config.yaml`의 `special_projects` 정책은 P0에서도 유지한다. project registry migration은 #7에서 다룬다.
 - 기존 fixture CLI 사용자는 token 없이 계속 테스트할 수 있어야 한다.
-- 기존 release feed 소비자는 최소 migration 기간 동안 호환 필드 또는 명시적 schema 변경 안내를 받아야 한다.
+- 기존 release feed 소비자는 호환 필드를 확인하고 새 pending/outbox 필드를 선택적으로 처리한다. 공개 feed로 배포하는 것은 #12 visibility 정책이 정해진 뒤 검토한다.
 - schedule 시각은 의도적 변경이 아니면 유지한다.
 
 ## 4. P1-A — Kubernetes Projects and Security
@@ -208,14 +213,15 @@ Gate:
 - [x] 목표 아키텍처 정의
 - [x] 상태·AI 경계 ADR 작성
 - [x] Epic 및 하위 이슈 생성
-- [ ] digest window와 prerelease 기본값 결정
+- [x] P0 prerelease metadata 보존 및 Release 알림 포함 정책 결정
+- [ ] P1 digest window 결정
 - [ ] project tier 초기 목록 검토
 
 ### Build
 
-- [ ] P0 event/outbox 구현
-- [ ] incremental release collector 구현
-- [ ] preview/commit workflow 구현
+- [x] P0 event/outbox 구현
+- [x] incremental release collector 구현
+- [x] preview/commit workflow 구현
 - [ ] project registry/classifier 구현
 - [ ] advisory collector 구현
 - [ ] AI adapter/schema 구현
@@ -223,12 +229,12 @@ Gate:
 
 ### Test
 
-- [ ] legacy behavior characterization
-- [ ] state transition tests
-- [ ] pagination tests
-- [ ] threshold accumulation tests
-- [ ] preview no-write tests
-- [ ] Slack retry tests
+- [x] legacy behavior characterization
+- [x] state transition tests
+- [x] pagination tests
+- [x] threshold accumulation tests
+- [x] preview no-write tests
+- [x] Slack retry tests
 - [ ] private visibility tests
 - [ ] AI schema/fallback tests
 
@@ -245,7 +251,7 @@ Gate:
 - [x] roadmap
 - [x] ADR
 - [x] Codex UltraGoal
-- [ ] P0 migration/runbook
+- [x] P0 migration/runbook
 - [ ] event/feed schema reference
 - [ ] local LLM setup/runbook
 
@@ -305,10 +311,8 @@ IN SCOPE
 - #6 preview/concurrency safety
 - 관련 tests/docs/workflow
 
-STRETCH
-- #7 registry schema와 기존 special_projects migration 기반
-
 OUT OF SCOPE
+- #7 project registry/classifier
 - #8 live GHSA collector
 - #9 production local LLM
 - #10 full Slack redesign
@@ -353,10 +357,12 @@ P0는 상태 모델 변경 폭이 크므로 한 번에 P1까지 얹지 않는다
 P0 PR은 다음 rollback을 가능하게 해야 한다.
 
 - legacy `check_release.py` 동작을 tag/commit으로 즉시 복구
-- SQLite DB는 별도 `.cache` 파일로 유지
+- SQLite DB는 별도 `.cache/events.sqlite3` 파일로 유지
 - migration은 원본 `.cache/releases.json`을 삭제하지 않음
-- preview와 schedule mode를 config/flag로 전환 가능
+- 수동 preview와 schedule commit mode는 명시적 flag/workflow input으로 구분
 - Slack notifier cutover 전에 old/new 결과 비교 report 보존
+
+**운영 rollback 주의:** legacy `.cache/releases.json`은 P0 이후 갱신되지 않으므로 이전 workflow를 그대로 재가동하면 오래된 cache 기준으로 중복 Slack 전송이 생길 수 있다. 먼저 새 전송을 멈추고 DB/캐시 및 전달 이력을 백업·대조한 뒤 사람이 전환 여부를 결정한다. Actions cache는 영구 DB가 아니며 stale restore/eviction/save 실패 또는 Slack 성공 직후 DB 반영 실패로 exactly-once를 보장하지 못한다.
 
 ## 12. 완료 보고 형식
 

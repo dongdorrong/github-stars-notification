@@ -1,5 +1,6 @@
 # Runtime artifacts
 .cache/
+.omx/
 repos.txt
 github-output.txt
 release-feed.json
