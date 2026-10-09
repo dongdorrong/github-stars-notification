@@ -1,88 +1,53 @@
-# AI Project Context — GitHub Stars Release Notification
+# AI Project Context — GitHub Stars Kubernetes Intelligence
 
-> 다른 세션·프로젝트가 이 저장소의 **현재 P0 Release 경로**를 이해하기 위한 handoff 문서다. 목표 설계와 구현 완료 범위를 혼동하지 않는다.
+> 구현 handoff: P0 Release 경로는 기존 운영 기준이다. P1/P2(#7~#12) 코드는 이 feature branch에 추가 중이나 최종 HEAD 원격 preview, PR CI, main shadow/canary/full 운영은 별도 증거 전까지 **미검증**이다. 설계와 운영 완료를 혼동하지 않는다.
 
-## 1. 목적과 구현 범위
+## 목적·권위 경계
 
-GitHub에서 star한 저장소의 Release를 주기적으로 수집하고, 결정적 정책에 따라 Slack에 알린다. P0(#4~#6)는 GitHub Release ID를 event identity로 사용하고 SQLite event/outbox를 통해 pending 누적·실패 재시도·preview 안전성을 제공한다. Kubernetes project registry, GHSA, 로컬 LLM 분석, Critical/High/Digest routing, maintainer announcements, 공개 Knowledge visibility 강화는 #7~#12의 후속 범위다.
+Starred repository의 공식 Release, 공개 GitHub Security Advisory와 명시적 maintainer announcement를 수집한다. Python/SQLite가 GitHub Release ID·GHSA ID·Discussion/Issue/RSS 안정 ID, 중복, cursor, outbox, retry, routing, Slack ack를 소유한다. 원본 사실과 revision은 AI 요약보다 우선한다. AI는 schema 검증을 통과한 한국어 요약·분류·권고만 만들며 이벤트 ID, source trust, 보안 floor, suppression, outbox, GitHub/Slack 쓰기 권한이 없다. 실제 LLM이 없어도 결정적 fallback으로 계속된다.
 
-## 2. 핵심 파일
+## 핵심 경로
 
 | 경로 | 역할 |
 | --- | --- |
-| `.github/workflows/notify-starred-releases.yml` | schedule/dispatch mode, inventory 수집, cache restore/save, Slack secret 경계, concurrency |
-| `.github/scripts/check_release.py` | 호환 CLI, config, feed/output, pipeline 실행 |
-| `starwatch/release_collector.py` | live/fixture Release 목록 수집과 ID 정규화 |
-| `starwatch/event_store.py` | SQLite schema, event/outbox 상태, transaction, lease·ack |
-| `starwatch/pipeline.py` | legacy 기준선, 수집·저장·선택·전달 orchestration |
-| `starwatch/policy.py`, `starwatch/notifier.py`, `starwatch/slack_payload.py` | pending 선택, Slack 응답, 순수 payload 생성 |
-| `config.yaml` | 관심 프로젝트와 알림 정책. `owner / repo` 표기는 `owner/repo`로 정규화 |
-| `docs/P0_RUNBOOK.md` | 운영·마이그레이션·복구·잔여 위험 |
-| `tests/` | token-free fixture 및 상태 전이 회귀 테스트 |
+| `.github/workflows/notify-starred-releases.yml` | schedule/preview/commit, starred inventory, secret/cache/Slack save 경계, concurrency |
+| `.github/scripts/check_release.py`, `starwatch/pipeline.py` | 호환 CLI/feed, legacy 기준선, P0 수집·outbox·전달 orchestration |
+| `starwatch/release_collector.py` | 최근 bounded Release scan, 점진 reconciliation, ID 중복 제거 |
+| `starwatch/event_store.py` | SQLite v1→v2 migration, raw/revision/AI/routing/outbox/delivery audit |
+| `starwatch/registry.py`, `config/projects.yaml` | 명시적 registry, aliases, classifier, legacy special 호환 |
+| `starwatch/advisories.py`, `starwatch/announcements.py`, `starwatch/signal_collectors.py` | bounded GHSA 및 opt-in Discussion/Issue/RSS, read-only GitHub adapter |
+| `starwatch/analysis.py`, `starwatch/routing.py`, `starwatch/intelligence.py` | schema 검증 AI/fallback, 결정적 priority floor, shadow/canary/full |
+| `starwatch/security.py`, `scripts/export_knowledge_jsonl.py` | 구조적 redaction, visibility-gated read-only Knowledge JSONL |
+| `config.yaml` | collector, notification, intelligence, analysis, routing, artifact 안전 기본값 |
 
-## 3. 현재 실행 흐름
+## P0 호환 동작
 
-1. workflow가 `gh api /user/starred --paginate`로 starred repository 목록과 inventory를 로컬 파일에 만든다.
-2. Release collector가 최근 페이지를 bounded scan하고 저장된 reconciliation 진행 상태로 과거/backdated Release를 후속 실행에서 재확인한다. 한 실행에서 모든 과거 페이지를 읽지는 않는다. GitHub Release ID(`github:release:<id>`)로 중복을 제거한다. 저장소별 API 오류는 다른 저장소와 분리한다. 실패한 page의 부분 결과는 버리되 이전에 완료한 page의 event는 보존하며 실패 page의 cursor는 전진시키지 않는다. 격리된 HTTP 404/429/5xx가 **시작한 저장소 중** 50% 이하이고 최소 한 저장소가 완료됐다면 exit 0이다. 오류 또는 deferred가 있으면 `collection_degraded: true`다. 401/403, 미분류 오류, 과반 실패, 완료 저장소 0건은 exit 1이며 Slack을 억제한다.
-3. pipeline이 `.cache/events.sqlite3`의 `events`와 `notification_outbox`를 갱신한다. `.cache/releases.json`은 매번 read-only로 검증하되 ID가 없는 과거 기준선은 DB marker에 따라 최초 저장소 초기화에만 적용하며 원본을 보존한다.
-4. `min_release_count`는 실행별 신규 건수가 아니라 미전달 pending 누적 수에 적용된다. 특별 프로젝트가 pending이면 현재 정책상 즉시 후보가 된다.
-5. commit + `--send-slack`이면 Python notifier가 Slack을 호출한다. 2xx 확인 후 해당 chunk의 event만 `DELIVERED`로 갱신한다. 429/5xx/timeout은 실패 상태와 재시도 metadata를 남긴다.
-6. `.cache/release-feed.json`을 로컬에 만든다. Workflow는 inventory/feed를 artifact로 업로드하지 않는다.
+- Release ID는 `github:release:<GitHub ID>`다. 일반/특별 프로젝트 최근 scan은 최대 3/5 page, bootstrap 1 page, global/per-repo budget 900/60초다. 별도 reconciliation은 일반 8회·특수 2회 성공 방문을 기준으로 shard를 선택하고 page overlap을 두어 후속 실행에서 backdated 이벤트를 점진적으로 찾는다. 한 실행에서 전체 이력 수집을 보장하지 않는다.
+- 격리된 404/429/5xx가 시작 저장소의 50% 이하이고 최소 1개 완료면 `collection_degraded=true`, exit 0이다. 완료 0, 401/403, 미분류 오류, 과반 실패는 exit 1이며 Slack을 억제한다. 오류 본문·헤더·토큰·private URL은 공개 출력에 넣지 않는다.
+- `min_release_count: 5`는 **미전달 pending 누적 수**에 적용된다. 4+1은 5개가 같은 후보가 된다. 기존 special project는 즉시 후보. Slack 2xx 확인 후 해당 chunk만 DELIVERED, 429 Retry-After·5xx/timeout·부분 성공은 retry를 유지한다. Exactly-once 보장은 없다.
+- Feed `github-stars-release-feed/v1`: `releases[]`는 항상 `new_releases[]`의 discovery alias다. `pending_releases[]`는 전송 전 eligible pending, `notification_batch[]`는 `slack_chunks[].event_ids`의 정확한 순서 합집합이다. 현재 알림 분석은 `notification_batch[]`를 사용한다. `pending_count`는 지연 재시도를 포함한 전송 후 수다.
+- `.cache/releases.json`은 삭제·수정하지 않는 read-only legacy boundary다. 첫 cutover 기본 `suppress_existing`은 관측 backlog를 저장하되 SUPPRESSED로 두고 Slack 전송을 막는다. 이후 새 Release만 정상 pending으로 들어간다. Malformed cache/DB는 빈 state로 교체하지 않는다.
+- Schedule은 UTC 23:00/05:00/08:00. 수동 dispatch 기본 preview는 원본 DB를 메모리 복사본으로 읽고 운영 DB/outbox/cache/last notification을 바꾸거나 Slack을 호출하지 않는다. Commit은 기본 브랜치만 허용한다. `--sleep-seconds`/`--no-sleep`은 deprecated no-op이다.
 
-Feed schema v1의 배열은 분리된 계약이다.
+## P1/P2 추가 동작과 상태
 
-| 필드 | 의미 |
-| --- | --- |
-| `new_releases[]`, `new_release_count` | 이번 실행에서 처음 발견한 event. 기존 `releases[]`/`release_count`의 고정 alias이며 Slack 상태에 따라 의미가 달라지지 않는다. Knowledge exporter는 이 discovery alias만 읽는다. |
-| `pending_releases[]`, `pending_release_count` | 전송 전 선택 가능한 pending. 지연 재시도 중인 event는 제외한다. |
-| `notification_batch[]`, `notification_batch_count` | `slack_chunks[].event_ids`와 순서까지 일치하는 생성 알림 batch. LLM의 현재 알림 분석 입력이다. |
-| `pending_count` | 지연 재시도를 포함한 **전송 후** 미전달 수. `pending_before_delivery_count`는 같은 기준의 전송 전 수다. |
+- `config/projects.yaml`의 명시 결정·ignore가 휴리스틱보다 우선한다. 기존 `special_projects`와 release floor가 충돌하면 fail closed한다. Classification report는 전체/visibility/tier/category/ambiguous 건수만 공개한다.
+- Global GHSA는 primary public source다. Repository GHSA는 기본 off/권한 의존. `modified` window와 cursor pagination, overlap, source별 최대 3 page/120초 예산을 사용한다. 처음 관측한 cohort는 bootstrap 억제; GHSA 수정은 동일 ID의 revision으로 남긴다. Registry에 결정적으로 매핑되지 않은 권고는 Slack 후보가 아니다.
+- Discussion/Issue/RSS는 registry에서 개별 opt-in·allowlist 없이는 수집하지 않는다. Maintainer trust는 원천/label/category/association에서 결정하며 AI가 높이지 못한다. RSS는 HTTPS allowlist, DNS/redirect/응답 크기/XML 경계를 적용한다.
+- SQLite schema v2는 `event_revisions`, `ai_analyses`, `routing_decisions`, `delivery_attempts`, outbox `suppression_reason`을 추가한다. Preview는 RAM에서만 v1→v2 migration한다. Commit은 기존 v1을 transaction으로 업그레이드하고 event/ack 이력을 유지한다. **P0 코드는 v2 DB를 직접 열 수 없다**. 백업 없는 단순 코드 rollback은 안전하지 않다.
+- `analysis.enabled: false` 기본. JSON schema `k8s-intelligence-analysis/v1`에 맞는 응답만 별도 저장하고 event/hash/schema/prompt/provider/model로 cache한다. Fallback도 별도 provider로 저장한다. AI는 deterministic CRITICAL/HIGH를 하향할 수 없다. `routing`은 CRITICAL/HIGH 즉시, DIGEST 5개/24시간/KST 17시, SUPPRESSED 사유 보존을 결정한다.
+- `intelligence.mode: shadow` 기본은 **새 signal GHSA/announcement Slack을 억제**하고 Release P0 전달을 유지한다. Canary는 명시 프로젝트만, full은 승인된 정책 전체다. 이번 작업에서 canary/full 운영이나 실제 LLM/Slack 전송은 하지 않는다.
+- Inventory/feed artifact upload 기본 off. 공개 Knowledge JSONL은 명시 public만, private/internal은 명시적 private destination+opt-in, unknown은 제외한다. DB export에서 `repository_visibility:<repo>` 최신 metadata는 이전 public event/revision/AI payload보다 우선한다. [Knowledge export](KNOWLEDGE_EXPORT.md)를 따른다.
 
-Feed와 Step Summary는 `repositories_total/started/completed/deferred`, 별도 `reconciliation_deferred`, `pages_fetched`, `releases_observed`, `new_release_count`, `elapsed_seconds`, `collection_budget_exhausted`, `collection_success_count`, `collection_error_count`, `collection_degraded`, `collector_errors_by_type`에 대응하는 수집 통계와 안전한 HTTP 범주를 남긴다. 진행 로그는 저장소 실명을 쓰지 않고 실행별 ordinal과 짧은 keyed reference를 사용한다. 오류 응답 본문·헤더·토큰·요청 URL은 남기지 않는다. 로컬 feed의 Release body/title/URL은 여전히 untrusted input이며 public/private 필터링도 보장하지 않는다.
+## 운영·보안·검증
 
-Draft는 알림 대상에서 제외하며, prerelease는 metadata를 보존하고 현재 Release 정책에 포함한다. Live Release에는 숫자 ID가 필수다. 기존 ID 없는 fixture만 deterministic fixture 전용 fallback ID를 사용한다.
-
-## 4. 모드와 GitHub Actions
-
-| 실행 | 동작 |
-| --- | --- |
-| CLI 기본 `--mode preview` | 기존 DB를 메모리 복사본으로 읽고 수집·feed preview. 운영 DB/outbox/legacy cache/last notification 불변, Slack 0회 |
-| CLI `--mode commit` | DB/event/outbox/migration metadata 갱신. `--send-slack` 지정 시 정책 후보를 실제 전송 |
-| schedule | UTC `23:00`, `05:00`, `08:00`; commit + Slack |
-| `workflow_dispatch` | 기본 preview; commit은 기본 브랜치에서만 허용 |
-
-Workflow는 `contents: read`, 고정 concurrency group, `cancel-in-progress: false`, job timeout을 사용한다. Preview는 DB cache를 restore해 읽을 수 있지만 새 state cache를 저장하지 않으며 Slack secret을 주입받지 않는다. Commit은 legacy cache를 read-only로 restore하고 별도 DB cache namespace에 유효한 SQLite 파일을 저장한다. Slack 실패로 step이 실패해도 유효한 DB라면 save를 시도한다.
-
-Collector 기본값은 `per_page: 100`, recent 일반/관심 최대 3/5 page, 새 저장소 bootstrap 1 page, 알려진 ID만 있는 page 1개에서 recent 경로 중단, 전체/저장소 예산 900/60초다. 초기화된 저장소의 과거 reconciliation은 일반 8회 중 1회에 최대 2 page, 관심 프로젝트 2회 중 1회에 최대 4 page를 확인하며 한 실행의 deep scan 대상은 최대 10개 저장소다. `collector_next_repo_index`, `reconcile_visit:<repo>`, `reconciliation_cursor:<repo>`가 공정한 재개와 한 page overlap을 보존한다. Preview는 이 metadata를 운영 DB에 저장하지 않는다. 세부 예산·복구 기준은 [P0 런북](P0_RUNBOOK.md)에 있다.
-
-CLI의 `--sleep-seconds`/`--no-sleep`은 이전 호출과의 호환을 위한 deprecated no-op이며 새 collector의 repository pacing을 조정하지 않는다.
-
-Actions cache는 **영구 상태 저장소가 아니다**. Eviction/stale restore/save 실패나 Slack 성공 직후 DB ack·cache save 전에 종료되면 중복 또는 상태 소실이 생길 수 있다. Concurrency는 실행 중인 run을 직렬화하지만 대기 run의 실행 순서·모두 실행됨을 보장하지 않는다. 따라서 이 구현은 exactly-once가 아니다.
-
-## 5. 첫 실행과 migration
-
-- `notification.first_run_notify` 기본값은 `false`다. cache miss나 처음 보는 repository의 기존 Release를 baseline으로 기록하고 대량 Slack 전송을 막는다.
-- 기존 `.cache/releases.json`의 repo/tag/published는 과거 event ID가 아니라 migration 경계값이다. 최초 migration은 그 실행의 수집 성공 여부와 무관하게 **모든 legacy 저장소**의 published cutoff를 `legacy_cutover_published_at:<repo>`에 기록한다. 실패·deferred 저장소도 이후 첫 수집에 이 경계를 사용하며 legacy 파일이 없어져도 유지된다. 전역 migration marker만 있는 기존 P0 DB에서 미초기화 저장소의 cutoff가 빠졌다면 legacy 파일이 남아 있을 때만 보충할 수 있다. 파일과 metadata가 모두 없으면 원래 경계를 복원할 수 없다. Legacy 파일이 있는 첫 cutover 실행은 Slack을 보내지 않는다. Legacy 파일이 없고 `first_run_notify: true`를 명시한 경우 첫 inventory 알림은 가능하며 bootstrap 억제 경계를 설정하지 않는다.
-- `notification.cutover_pending_policy` 기본값은 `suppress_existing`이다. Legacy 파일이 있고 `legacy_migrated` marker와 기존 event row가 없는 최초 전환 실행에서 발견한 모든 Release를 저장하되 `SUPPRESSED`로 처리한다. `first_run_notify: true`도 이 cutover 억제를 우회하지 않는다. Preview는 메모리에서 같은 정책을 적용할 뿐 marker/state를 저장하지 않는다. 다음 실행의 신규 Release는 기존 결정적 pending 정책을 따르며, 이미 migration을 마친 DB의 pending/retry/delivered를 소급 변경하지 않는다. 명시적 `preserve_pending`은 이전 legacy 날짜 경계 동작을 유지한다.
-- malformed legacy cache나 SQLite DB/schema는 빈 상태로 자동 대체하지 않고 실패한다. 원본 cache는 삭제·덮어쓰지 않는다.
-- 기본 브랜치 운영 rollout 및 rollback은 [P0 런북](P0_RUNBOOK.md)의 백업·대조 절차를 따른다. 오래된 legacy cache만으로 이전 workflow를 바로 재가동하면 중복 알림 위험이 있다.
-
-## 6. 연동과 보안 경계
-
-- `GH_PAT`와 `SLACK_WEBHOOK_URL`은 workflow Secrets 또는 실행 환경에서만 주입한다. 파일·로그·artifact·커밋에 값을 남기지 않는다.
-- Python/SQLite가 신규·중복·전달 여부의 source of truth다. GitHub MCP는 선택적 read-only 수집면이다. LLM은 요약·분류·권고 초안만 만들며 상태 변경, Slack 전송, 정책 override를 하지 않는다.
-- `.cache/release-feed.json`은 로컬 신뢰 경계에 남긴다. `scripts/export_knowledge_jsonl.py`는 현재 private/public 판별 없이 visibility를 표시할 수 있으므로 public-only 입력을 확인하지 않은 feed를 공개 Knowledge Store로 보내지 않는다(#12 후속).
-- GitHub Release title/body/URL은 외부 저장소 작성자가 제어할 수 있는 데이터다. Shell code에 직접 expression으로 삽입하거나 LLM 지시로 취급하지 않는다.
-
-## 7. 검증
-
-저장소 루트에서 다음 명령을 실행한다. Fixture smoke command와 운영 절차는 [P0 런북](P0_RUNBOOK.md)에 있다.
+`GH_PAT`, Slack webhook, LLM URL/key 값은 Secret/환경에서만 주입한다. GitHub release/advisory/Issue/Discussion/RSS 본문은 untrusted이며 Actions inline shell source나 model system policy로 승격하지 않는다. Preview는 실 LLM 호출과 Slack transport 없이 fixture 또는 공식 read-only 수집만 한다. GitHub Actions cache eviction, Slack ack 후 cache save 실패, source rate limit/정렬 변화는 at-least-once 및 발견 지연 위험으로 남는다.
 
 ```bash
 python3 -m py_compile .github/scripts/check_release.py
-python3 -m compileall -q .github/scripts starwatch
+python3 -m compileall -q .github/scripts starwatch scripts
 python3 -m unittest discover -s tests -v
 git diff --check
 ```
 
-실제 Slack webhook이나 운영 commit-mode workflow는 회귀 검증에 사용하지 않는다. Fake transport를 주입한 fixture 테스트로 성공·429·500·부분 실패·재시도를 확인한다.
+세부 절차: [P0 런북](P0_RUNBOOK.md), [P1/P2 롤아웃](P1_P2_ROLLOUT_RUNBOOK.md), [Registry](PROJECT_REGISTRY.md), [Security Advisory](SECURITY_ADVISORY_RUNBOOK.md), [Announcements](MAINTAINER_ANNOUNCEMENT_SOURCES.md), [Local LLM](LOCAL_LLM_RUNBOOK.md), [Knowledge export](KNOWLEDGE_EXPORT.md). 현재 구현·최종 preview 수치와 PR CI 상태는 최종 HEAD에서 별도 확인해야 한다.

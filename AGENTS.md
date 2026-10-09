@@ -35,7 +35,7 @@
 5. 수동 실행의 기본 preview는 수집 결과·feed를 보여주되 event DB, outbox, legacy cache, last notification을 변경하거나 Slack을 호출하지 않는다.
 6. workflow는 private starred repository 정보 노출 위험 때문에 inventory와 release feed를 artifact로 업로드하지 않는다. CLI가 만드는 로컬 feed는 신뢰할 수 있는 소비자만 사용한다.
 
-이 절은 **P0 Release 경로**만 설명한다. GHSA, registry, AI 분석, Critical/High/Digest routing, public visibility filtering은 후속 이슈 #7~#12이며 현재 구현으로 가정하지 않는다. 정확한 운영·복구 절차는 `docs/P0_RUNBOOK.md`를 따른다.
+P1/P2는 registry, GHSA/opt-in announcement, 별도 AI/fallback, routing, visibility export를 추가한다. 기본 shadow에서는 새 signal을 Slack으로 보내지 않고 기존 Release 경로를 유지한다. SQLite schema는 v2이며 preview migration은 메모리에서만 수행한다. 정확한 운영·복구 절차는 `docs/P0_RUNBOOK.md`를 따른다.
 
 ## Kubernetes Intelligence 목표
 
@@ -111,7 +111,7 @@ starred inventory
 - preview 실행은 state mutation과 Slack 전송이 없어야 한다.
 - GitHub MCP를 붙일 때는 가능한 `GITHUB_READ_ONLY=1`과 최소 toolset을 사용한다.
 - 외부 입력을 GitHub Actions inline shell code에 직접 expression 보간하지 않는다.
-- P0 workflow는 inventory/feed artifact를 업로드하지 않는다. public Knowledge export의 private/internal filtering은 #12 작업 전까지 보장하지 않는다.
+- P0 workflow는 inventory/feed artifact를 업로드하지 않는다. public Knowledge export는 private/internal/unknown을 제외하며 최신 inventory visibility를 적용한다.
 - malformed DB/cache를 자동 빈 state로 교체해 과거 상태를 잃지 않는다.
 
 ## 상세 문서
@@ -124,3 +124,13 @@ starred inventory
 - P0 운영/마이그레이션: `docs/P0_RUNBOOK.md`
 - GitHub MCP + 로컬 LLM 설계: `docs/GITHUB_MCP_LOCAL_LLM.md`
 - 보안 레이어 후속 조치: `docs/SECURITY_LAYERING_NOTES.md`
+
+## P1/P2 작업 경계
+
+- Python 3.12 및 hashed runtime/dev lock을 사용한다. `docs/DEPENDENCIES.md`의 schema/lint/audit gates를 실행한다.
+- 새 source 기본 rollout은 shadow다. feature preview는 실제 LLM/Slack/state save를 호출하지 않는다.
+- Raw source, AI analysis, routing audit와 outbox는 분리한다. source trust/identity/security floor를 AI가 변경하지 못한다.
+- v1→v2 migration은 atomic하며 v2 DB에 P0 코드 rollback을 직접 적용하지 않는다.
+- API endpoint/권한/커서는 `docs/SECURITY_ADVISORY_RUNBOOK.md`, RSS/신뢰 경계는 `docs/MAINTAINER_ANNOUNCEMENT_SOURCES.md`를 따른다.
+- 모듈 통합 변경은 mixed-source shadow, G003 batch mapping, current inventory visibility, global budget 테스트를 포함한다.
+- Epic #3은 운영 canary/full 수용 전 닫지 않는다.

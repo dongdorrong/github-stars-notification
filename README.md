@@ -1,278 +1,101 @@
-# 🌟 GitHub Stars 릴리스 알림
+# Kubernetes Ecosystem Intelligence Watcher
 
-<div align="center">
+GitHub starred 저장소의 공식 Release, GHSA 및 명시적으로 허용한 maintainer 공지를 수집하는 결정적 Python/SQLite watcher입니다. AI는 선택적 요약 계층이며 이벤트 식별·outbox·Slack 전송 권한을 갖지 않습니다.
 
-[![Workflow Status](https://github.com/dongdorrong/github-stars-notification/actions/workflows/notify-starred-releases.yml/badge.svg)](https://github.com/dongdorrong/github-stars-notification/actions)
-[![GitHub stars](https://img.shields.io/github/stars/dongdorrong/github-stars-notification?style=social)](https://github.com/dongdorrong/github-stars-notification)
+## 실행 경계
 
-GitHub에서 스타를 준 저장소의 새로운 릴리스를 감지하고, <br>
-정책에 맞는 경우 Slack으로 알려주는 GitHub Actions 자동화입니다. ✨
+- Python **3.12**, SQLite schema **2**. [의존성 관리](docs/DEPENDENCIES.md).
+- 기본 `intelligence.mode: shadow`: 새 GHSA/공지의 상태·분석·정책을 평가하지만 Slack으로 보내지 않습니다. 기존 Release pending 누적과 특별 프로젝트 즉시 알림은 유지합니다.
+- Preview는 SQLite의 메모리 복사본만 변경합니다. Slack, 실제 LLM, DB/cache save가 없습니다.
+- Schedule은 기존 KST **08:00 / 14:00 / 17:00**입니다. commit mode는 기본 브랜치만 허용합니다.
+- 본 기능 PR의 검증은 fixture와 feature-branch preview만 사용합니다. 병합/운영 rollout은 별도 승인 사항입니다.
 
-</div>
+## 구성
 
-## 🤖 AI/OMX 세션 컨텍스트
-
-다른 OMX/Codex 세션에서 이 저장소를 작업할 때는 아래 문서를 먼저 읽습니다.
-
-- Repo-local agent guidance: [`AGENTS.md`](AGENTS.md)
-- Project handoff/context: [`docs/AI_PROJECT_CONTEXT.md`](docs/AI_PROJECT_CONTEXT.md)
-- Kubernetes Intelligence 목표 아키텍처: [`docs/KUBERNETES_INTELLIGENCE_ARCHITECTURE.md`](docs/KUBERNETES_INTELLIGENCE_ARCHITECTURE.md)
-- 단계별 구현 로드맵: [`docs/KUBERNETES_INTELLIGENCE_ROADMAP.md`](docs/KUBERNETES_INTELLIGENCE_ROADMAP.md)
-- 결정적 상태·AI 경계 ADR: [`docs/adr/0001-deterministic-event-state-and-ai-boundary.md`](docs/adr/0001-deterministic-event-state-and-ai-boundary.md)
-- Codex P0 UltraGoal: [`docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`](docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md)
-- P0 운영/마이그레이션 런북: [`docs/P0_RUNBOOK.md`](docs/P0_RUNBOOK.md)
-- GitHub MCP + 로컬 LLM 연동 설계: [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)
-- 보안 레이어 후속 조치: [`docs/SECURITY_LAYERING_NOTES.md`](docs/SECURITY_LAYERING_NOTES.md)
-- RAG/Knowledge Store 전환 TODO: [`docs/rag-todo.md`](docs/rag-todo.md)
-
-## 🧭 Kubernetes Ecosystem Intelligence 확장 계획
-
-현재 P0 구현은 starred repository의 최근 Release를 **제한된 페이지·실행 시간 예산** 안에서 incremental 수집하고 SQLite event/outbox에 보관합니다. 과거 페이지에 삽입되거나 발행 시각이 늦게 반영된 Release는 저장된 reconciliation 진행 상태를 통해 후속 실행에서 발견합니다. 한 번의 실행에서 전체 Release 이력을 확인했다는 뜻은 아닙니다. 이후 Kubernetes/Cloud Native 프로젝트 분류, GHSA, Maintainer Announcement, 선택적 로컬 LLM 분석, Critical/High/Digest routing으로 확장할 계획입니다.
-
-```text
-Starred repositories
-  -> Kubernetes ecosystem classification
-  -> Releases / GHSA / official announcements
-  -> durable event store + notification outbox
-  -> deterministic priority policy
-  -> local LLM/Codex advisory analysis
-  -> Critical / High / Digest Slack delivery
-```
-
-핵심 원칙:
-
-- 원본 이벤트, notification state, AI 분석 결과를 분리합니다.
-- LLM은 신규/중복 판정, 상태 변경, Slack 전송 여부를 결정하지 않습니다.
-- Slack 성공 전에는 이벤트를 delivered 처리하지 않습니다.
-- 수동 preview 실행은 운영 상태를 소비하지 않습니다.
-- P0 workflow는 inventory/feed artifact를 업로드하지 않습니다. private/internal repository 정보의 public export 기본 제외는 #12 후속 작업입니다.
-
-GitHub 백로그:
-
-- Epic: [#3 Kubernetes ecosystem official intelligence watcher](https://github.com/dongdorrong/github-stars-notification/issues/3)
-- P0: [#4 event/outbox](https://github.com/dongdorrong/github-stars-notification/issues/4), [#5 incremental releases](https://github.com/dongdorrong/github-stars-notification/issues/5), [#6 state-safe preview/workflow](https://github.com/dongdorrong/github-stars-notification/issues/6)
-- P1: [#7 project registry](https://github.com/dongdorrong/github-stars-notification/issues/7), [#8 GHSA](https://github.com/dongdorrong/github-stars-notification/issues/8), [#9 local LLM](https://github.com/dongdorrong/github-stars-notification/issues/9), [#10 Slack routing](https://github.com/dongdorrong/github-stars-notification/issues/10)
-- P2: [#11 maintainer announcements](https://github.com/dongdorrong/github-stars-notification/issues/11), [#12 visibility/Knowledge/CI](https://github.com/dongdorrong/github-stars-notification/issues/12)
-
-> 위 다이어그램은 Epic #3의 목표 설계입니다. 이번 P0의 구현 범위는 Release 수집·상태·전달 안전성(#4~#6)이며 #7~#12는 아직 구현하지 않았습니다.
-
-## 🎯 기능
-
-- 🔍 GitHub 스타 저장소에서 최근 Release를 bounded pagination으로 수집하고 과거 페이지를 점진적으로 재확인 (GitHub Release ID 기준)
-- 📦 전체 starred repository 메타데이터를 `.cache/stars-inventory.json`으로 생성 (private 정보 노출 방지를 위해 artifact 업로드 없음)
-- ⏰ 하루 3번 자동 체크: 한국시간 08시, 14시, 17시 (UTC `23:00`, `05:00`, `08:00`)
-- 💾 `.cache/events.sqlite3`의 event/outbox로 pending 누적·중복 방지·실패 재시도
-- 💬 Slack Incoming Webhook 알림
-- ⭐ 관심 프로젝트 강조 및 즉시 알림 정책
-- 🧾 다른 앱/로컬 LLM이 읽을 수 있는 `.cache/release-feed.json` 생성
-- 🧪 기본 preview와 token-free fixture로 운영 상태·Slack을 변경하지 않고 로컬 테스트 가능
-
-<div align="center">
-
-![GitHub Stars Notification](images/sample.png)
-
-</div>
-
-## ⚙️ 설정 방법
-
-### 1️⃣ GitHub Personal Access Token (PAT) 생성
-
-```bash
-# Repository Secrets에 GH_PAT로 저장
-# starred repo와 release 조회가 가능한 읽기 권한을 사용
-```
-
-### 2️⃣ Slack Webhook URL 설정
-
-```bash
-# Slack 워크스페이스에서 Incoming Webhook 생성
-# Repository Secrets에 SLACK_WEBHOOK_URL로 저장
-```
-
-### 3️⃣ 관심 프로젝트와 알림 정책 설정
-
-`config.yaml`에서 관심 프로젝트와 정책을 관리합니다.
-
-```yaml
-special_projects:
-  - "kubernetes / kubernetes"
-  - "grafana/grafana"
-
-collector:
-  per_page: 100
-  max_incremental_pages_per_repo: 3
-  max_incremental_pages_special_project: 5
-  bootstrap_pages: 1
-  known_only_pages_to_stop: 1
-  global_budget_seconds: 900
-  per_repo_budget_seconds: 60
-  reconciliation_pages_per_repo: 2
-  reconciliation_pages_special_project: 4
-  max_reconciliation_repositories_per_run: 10
-  reconciliation_shards: 8
-  special_reconciliation_shards: 2
-
-notification:
-  min_release_count: 5
-  special_project_always_notify: true
-  first_run_notify: false
-  cutover_pending_policy: suppress_existing
-  max_slack_text_length: 35000
-
-feed:
-  output_path: ".cache/release-feed.json"
-
-llm:
-  enabled: false
-  provider: "local"
-  role: "summarize_and_prioritize_only"
-```
-
-정책 의미:
-
-| 설정 | 의미 |
+| 계층 | 구현/계약 |
 | --- | --- |
-| `min_release_count` | 미전달 pending 릴리스가 이 개수 이상 누적되면 Slack 알림 후보 |
-| `special_project_always_notify` | 관심 프로젝트 릴리스는 임계값 미만이어도 알림 |
-| `first_run_notify` | 명시적으로 `true`로 설정할 때만 첫 수집의 기존 릴리스를 bootstrap 알림 대상으로 포함. 기본 `false`; legacy 최초 전환에서는 `cutover_pending_policy`가 우선 |
-| `cutover_pending_policy` | 기본 `suppress_existing`: 최초 legacy→SQLite 전환 실행에서 발견한 Release를 저장하되 전부 `SUPPRESSED`로 처리. `preserve_pending`은 기존 legacy 날짜 경계 방식의 명시적 호환 옵션 |
-| `feed.output_path` | 앱/로컬 LLM 연동용 deterministic JSON feed 경로 |
+| Registry | [`config/projects.yaml`](config/projects.yaml), 명시 정책 → owner/topic/name/description → ambiguous. alias는 하나의 canonical 정책으로 연결합니다. |
+| Release | GitHub Release ID, 최근 bounded pagination + 저장된 overlap reconciliation. 매 실행 전체 이력 발견을 주장하지 않습니다. |
+| GHSA | Global public API의 modified window + Link continuation, 별도 withdrawn scan. Repository Advisory는 선택적 capability-degraded source입니다. |
+| Announcements | 프로젝트별 opt-in Discussions/labelled Issues/HTTPS RSS. trust·source provenance는 결정적입니다. |
+| AI | strict JSON schema, 분리된 cache, 입력은 untrusted envelope. 기본 disabled이며 결정적 fallback을 사용합니다. |
+| Routing | CRITICAL/HIGH 즉시, DIGEST 수량/시간/KST window, SUPPRESSED 사유 감사. AI는 security floor를 내리지 못합니다. |
+| Delivery | 2xx 이후 ack, 429 Retry-After, 5xx/timeout retry, 부분 성공 event만 ack. exactly-once 보장은 없습니다. |
+| Knowledge | read-only DB/feed JSONL; public만 기본 export, raw/AI/revision 문서 분리. |
 
-Collector 기본값은 최근 경로를 일반 저장소 최대 3 page, 관심 프로젝트 최대 5 page로 제한하고, 신규 저장소는 최근 1 page를 기준선으로 사용합니다. 한 번의 수집 예산은 900초(설정 상한 1,200초), 저장소당 60초입니다. 과거 페이지 reconciliation은 일반 저장소 8회 중 1회에 최대 2 page, 관심 프로젝트 2회 중 1회에 최대 4 page를 확인하되 한 실행에서 최대 10개 저장소만 deep scan합니다. 미뤄진 저장소와 reconciliation 진행 상태는 다음 commit 실행에 이어집니다. 이 정책은 한 실행의 완전한 이력 스캔이 아니라 API 비용과 지연 발견 사이의 절충입니다. 자세한 복구·관측 방법은 [P0 런북](docs/P0_RUNBOOK.md)을 참고하세요.
-
-## 📬 알림 형식
-
-새로운 릴리스가 정책을 만족하면 Slack 메시지가 전송됩니다.
-
-```text
-🚀 *새로운 릴리스 2개를 확인했습니다*
-• ⭐ grafana/grafana <https://github.com/grafana/grafana/releases/tag/v12.0.0|`v12.0.0`> — Release v12.0.0 (2026-06-20) [github:release:120001]
-• kubernetes/kubernetes <https://github.com/kubernetes/kubernetes/releases/tag/v1.34.0|`v1.34.0`> (2026-06-20) [github:release:120002]
-```
-
-표시 항목:
-
-- 저장소 이름 (`owner/repo`)
-- 릴리스 태그 링크
-- 릴리스 이름(태그와 다를 때만)
-- 발행 날짜 (`YYYY-MM-DD`)
-- stable event ID (`github:release:<id>`)
-- 관심 프로젝트 `⭐`
-
-## 🧾 Release feed / 로컬 LLM 연동
-
-`check_release.py`는 Slack 전송 여부와 무관하게 `.cache/release-feed.json`을 생성합니다. 이 파일은 신뢰할 수 있는 로컬/비공개 앱이나 로컬 LLM의 읽기 연결 지점입니다. Release title/body/URL은 외부 입력이므로 프롬프트·로그·공개 export에 그대로 신뢰하거나 게시하지 마세요.
-
-Feed schema v1의 배열은 서로 다른 시점을 나타냅니다.
-
-| 필드 | 의미 |
-| --- | --- |
-| `new_releases[]`, `new_release_count` | 이번 실행에서 처음 발견한 Release와 그 수. `releases[]`와 `release_count`는 기존 소비자용 **동일한 discovery alias**이며 알림 상태에 따라 의미가 바뀌지 않습니다. |
-| `pending_releases[]`, `pending_release_count` | 전송 전 현재 알림 대상으로 선택할 수 있는 pending Release와 그 수. 지연 재시도 중인 event는 제외됩니다. |
-| `notification_batch[]`, `notification_batch_count` | 생성된 Slack chunk가 표현하는 순서 그대로의 Release와 그 수. 알림 정책이 발동하지 않으면 빈 배열입니다. 부분 전송 실패 시에도 생성 당시 batch를 유지합니다. |
-| `slack_chunks[]` | 각 생성 chunk의 `event_ids`와 `payload`. 모든 chunk의 `event_ids`를 순서대로 합치면 `notification_batch[].event_id`와 같습니다. |
-| `pending_before_delivery_count`, `pending_count` | 지연 재시도를 포함한 전송 전·후 미전달 event 수. `pending_count`는 알림 후보 수가 아닙니다. |
-
-현재 알림을 분석하는 로컬 LLM은 `notification_batch[]`를 사용합니다. `new_releases[]`는 이번 실행의 신규 수집 분석, `releases[]`는 기존 discovery 소비자와 Knowledge exporter의 호환용입니다. Knowledge exporter는 신규 수집분만 내보내며 누적 알림 batch를 내보내지 않습니다.
-
-저장소별 수집 실패는 안전한 범주와 건수만 feed/Actions Step Summary에 남깁니다. 한 저장소 이상 완료되고 **시작한 저장소 중** 실패 비율이 50% 이하이며 모든 실패가 해당 저장소에 격리된 HTTP 404/429/5xx이면 정상 종료합니다. 오류나 예산으로 미룬 저장소가 있으면 `collection_degraded: true`입니다. HTTP 401/403, 미분류 오류, 50% 초과 실패, 완료 저장소 0건, 상태 검증 오류 또는 Slack 전송 실패는 종료 코드 1입니다. 치명적 수집 실패에서는 정상 수집 저장소의 event를 보존하되 Slack 전송은 하지 않습니다. 오류 정보에는 응답 본문·헤더·토큰·요청 URL을 포함하지 않습니다. 로컬 feed는 여전히 Release 원본 정보를 포함하므로 신뢰 경계 안에서만 읽습니다.
-
-원칙:
-
-- Python이 새 릴리스/중복/알림 여부를 결정합니다.
-- 로컬 LLM은 요약, 분류, 중요도 초안만 작성합니다.
-- GitHub MCP를 붙이더라도 읽기 전용 수집면으로 사용합니다.
-
-자세한 설계는 [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)를 봅니다.
-
-### fordongdorrong Knowledge export
-
-생성된 `.cache/release-feed.json`을 GitHub API 재호출이나 Slack 전송 없이 중앙 Knowledge Store 계약(JSONL)으로 내보냅니다.
-
-> 현재 exporter는 입력 Release를 공개 데이터로 판별·필터링하지 않습니다. private/internal 저장소가 섞인 feed에는 사용하지 말고, 신뢰할 수 있는 public-only 입력을 확인한 경우에만 실행하세요. 공개 범위 강제는 #12 후속 작업입니다.
+## 설치와 검증
 
 ```bash
-./scripts/export_knowledge_jsonl.py \
-  --feed .cache/release-feed.json \
-  --output /tmp/github-stars.knowledge.jsonl
-```
-
-산출물은 `fordongdorrong` 환경에서 `fordong knowledge validate-export` / `import --dry-run`으로 검증합니다. 이 저장소의 로컬 검증에는 해당 외부 CLI가 포함되지 않습니다.
-
-## 🚀 실행
-
-### GitHub Actions
-
-워크플로우는 schedule 또는 Actions 탭의 `Run workflow`로 실행됩니다. schedule은 commit mode로 상태를 갱신합니다. 수동 실행은 기본 `preview`이며 DB/outbox/legacy cache/last notification을 변경하거나 Slack을 호출하지 않습니다. 수동 commit은 운영 상태를 변경하므로 런북의 rollout 절차를 먼저 확인하세요.
-
-매 실행에서 다음 로컬 파일을 만들지만, private starred repository 정보가 포함될 수 있어 artifact로 업로드하지 않습니다.
-
-- `repos.txt`: `owner/repo` 전체 목록
-- `.cache/stars-inventory.json`: description/topics/language/update 시각 등 분류용 메타데이터
-
-수동 `commit`은 기본 브랜치에서만 허용됩니다. commit 경로는 상태 변경과 정책이 충족될 경우 Slack 전송을 함께 수행합니다. feature branch에서 검증할 때는 `preview`만 사용하세요. Action의 `.cache/events.sqlite3` 보존은 cache에 의존하므로 영구 내구성이나 exactly-once 전달 보장은 아닙니다.
-
-CLI의 `--sleep-seconds`와 `--no-sleep`은 이전 호출과의 호환을 위해서만 받는 **deprecated no-op**입니다. 새 collector의 저장소별 pacing을 조정하지 않습니다. 새 명령에는 넣지 마세요.
-
-### 로컬 fixture 테스트
-
-실제 GitHub token 없이 preview 수집을 확인할 수 있습니다. 아래 fixture의 숫자 `id`는 live GitHub Release ID에 대응합니다.
-
-```bash
-tmp_dir="$(mktemp -d)"
-cat > "$tmp_dir/repos.txt" <<'EOF'
-grafana / grafana
-other/repo
-EOF
-
-cat > "$tmp_dir/releases.json" <<'EOF'
-{
-  "grafana/grafana": {
-    "id": 120001,
-    "tag_name": "v12.0.0",
-    "name": "Release v12.0.0",
-    "published_at": "2026-06-20 10:00:00",
-    "html_url": "https://github.com/grafana/grafana/releases/tag/v12.0.0"
-  }
-}
-EOF
-
-python3 .github/scripts/check_release.py \
-  --repos-file "$tmp_dir/repos.txt" \
-  --fixture-releases "$tmp_dir/releases.json" \
-  --state-db "$tmp_dir/events.sqlite3" \
-  --mode preview \
-  --feed-path "$tmp_dir/release-feed.json" \
-  --github-output "$tmp_dir/github-output.txt"
-test ! -e "$tmp_dir/events.sqlite3"
-```
-
-### 실제 로컬 preview
-
-```bash
-mkdir -p .cache
-
-gh api /user/starred --paginate \
-  --jq '.[] | {full_name, description, html_url, language, topics, archived, disabled, fork, pushed_at, updated_at, stargazers_count, open_issues_count}' \
-  > .cache/stars-inventory.jsonl
-jq -s 'sort_by(.full_name)' .cache/stars-inventory.jsonl > .cache/stars-inventory.json
-jq -r '.[].full_name' .cache/stars-inventory.json > repos.txt
-
-python3 .github/scripts/check_release.py --mode preview
-```
-
-위 명령은 인증된 `gh` 및 스크립트용 `GH_TOKEN`이 실행 환경에 **이미** 주입된 경우에만 동작합니다. 이 live 예시는 token-free fixture 검증 범위에 포함되지 않으므로 인증된 환경에서 별도 확인이 필요합니다. 토큰과 webhook은 shell history, `.env`, Git 커밋에 남기지 않습니다. 실제 Slack 전송은 이 예시에 포함하지 않습니다. 상태 전이, 마이그레이션, rollback, 잔여 위험은 [P0 런북](docs/P0_RUNBOOK.md)을 참조하세요.
-
-## ✅ 검증
-
-```bash
-python3 -m py_compile .github/scripts/check_release.py
-python3 -m unittest discover -s tests -v
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install --require-hashes -r .github/scripts/requirements-dev.txt
+python -m py_compile .github/scripts/check_release.py
+python -m compileall -q .github/scripts starwatch scripts
+python -m unittest discover -s tests -v
+python scripts/check_contracts.py
+python -m ruff check --select E4,E7,E9,F .github/scripts starwatch scripts
+python -m pip_audit --disable-pip --no-deps -r .github/scripts/requirements.txt
 git diff --check
 ```
 
----
+정확한 security/format/lock CI 명령은 [의존성 런북](docs/DEPENDENCIES.md)과 `.github/workflows/ci.yml`을 따릅니다. Tests는 실 토큰·Slack·LLM 없이 실행합니다.
 
-<div align="center">
-Made with ❤️ by <a href="https://github.com/dongdorrong">dongdorrong</a>
-</div>
+## 로컬 fixture preview
+
+```bash
+tmp_dir="$(mktemp -d)"
+printf 'example/project\n' > "$tmp_dir/repos.txt"
+printf '{"example/project":[{"id":1,"tag_name":"v1","published_at":"2026-10-01T00:00:00Z"}]}' > "$tmp_dir/releases.json"
+python .github/scripts/check_release.py --mode preview \
+  --repos-file "$tmp_dir/repos.txt" --fixture-releases "$tmp_dir/releases.json" \
+  --cache-path "$tmp_dir/legacy.json" --state-db "$tmp_dir/events.sqlite3" \
+  --feed-path "$tmp_dir/feed.json" --github-output "$tmp_dir/outputs.txt"
+test ! -e "$tmp_dir/events.sqlite3"
+```
+
+실제 read-only preview는 이미 주입된 `GH_TOKEN`과 inventory를 사용합니다. feature branch에서는 `--send-slack`이나 commit workflow를 실행하지 않습니다. `--sleep-seconds`/`--no-sleep`은 문서화된 deprecated no-op입니다.
+
+## 설정
+
+`config.yaml`은 JSON-compatible YAML입니다. JSON 표기는 별도 YAML 설치가 없는 fixture 환경에서도 중첩 정책을 정확히 읽게 합니다.
+
+- `intelligence`: shadow/canary/full, registry 경로, signal page/runtime 상한.
+- `analysis.enabled: false`: 실제 endpoint/key는 환경변수 이름으로만 지정합니다.
+- `routing.destination_visibility: private`: 공개 목적지는 `public`으로 명시하며 private/internal/unknown은 차단됩니다.
+- `artifacts.*.enabled: false`: 기본 Actions는 inventory/feed/DB를 업로드하지 않습니다.
+- `special_projects`: 한 호환 기간 유지. registry와 충돌하면 오류이며 특별 Release 즉시 알림을 조용히 제거하지 않습니다.
+- `notification.cutover_pending_policy: suppress_existing`: 최초 legacy cutover의 관측 backlog는 저장하되 SUPPRESSED. 이후 신규 Release부터 정상 pending입니다.
+
+초기 registry 10개는 명시 정책입니다. 현재 inventory 확인에서는 8개가 starred이고 `grafana/grafana`, `prometheus-operator/kube-prometheus`는 unstarred지만 명시 추적 정책으로 유지합니다. `aws/karpenter`는 `aws/karpenter-provider-aws`로 이동한 **별도** 프로젝트이며 `kubernetes-sigs/karpenter`의 alias가 아닙니다.
+
+## Feed 및 Knowledge 계약
+
+`github-stars-release-feed/v1`을 additive 확장합니다.
+
+- `releases[] == new_releases[]`: 이번 invocation에서 처음 발견한 **Release**만.
+- `pending_releases[]`: 전송 전 eligible Release pending.
+- `new_events[]` / `pending_events[]`: 새 source를 포함한 이벤트.
+- `notification_batch[]`: 생성된 모든 `slack_chunks[].event_ids`의 정확한 순서 union. 현재 알림 분석의 LLM 입력입니다.
+- `pending_count`: 지연 retry를 포함한 전송 후 pending.
+- `intelligence`: 분류/신호/API오류/AI/cache/route/visibility/deferred 수치만.
+
+로컬 feed는 private raw 정보를 포함할 수 있으므로 공개 artifact로 간주하지 않습니다. secret-like 값은 출력 경계에서 구조적으로 지웁니다. 공개 export는 별도 visibility 검증을 거칩니다.
+
+```bash
+python scripts/export_knowledge_jsonl.py --state-db .cache/events.sqlite3 --output /tmp/intelligence.jsonl
+# 이전 discovery feed 소비자도 호환:
+python scripts/export_knowledge_jsonl.py --feed .cache/release-feed.json --output /tmp/discoveries.jsonl
+```
+
+## 운영 문서
+
+- [아키텍처](docs/KUBERNETES_INTELLIGENCE_ARCHITECTURE.md) / [로드맵](docs/KUBERNETES_INTELLIGENCE_ROADMAP.md) / [AI 세션 컨텍스트](docs/AI_PROJECT_CONTEXT.md)
+- [P0 상태·cutover](docs/P0_RUNBOOK.md) / [schema·migration](docs/EVENT_SCHEMA_REFERENCE.md)
+- [Registry](docs/PROJECT_REGISTRY.md) / [GHSA API](docs/SECURITY_ADVISORY_RUNBOOK.md)
+- [로컬 LLM](docs/LOCAL_LLM_RUNBOOK.md) / [Slack routing](docs/SLACK_ROUTING_POLICY.md)
+- [신뢰 공지](docs/MAINTAINER_ANNOUNCEMENT_SOURCES.md) / [Knowledge](docs/KNOWLEDGE_EXPORT.md)
+- [보안](docs/SECURITY_LAYERING_NOTES.md) / [Rollout 및 rollback](docs/P1_P2_ROLLOUT_RUNBOOK.md)
+
+## 잔여 위험
+
+Actions cache는 영구 DB가 아닙니다. Slack 성공과 DB/cache 저장 사이 crash는 중복을 만들 수 있습니다. Reconciliation은 지속적인 정상 commit과 metadata 보존을 전제로 하며 최대 역사 발견 지연을 보장하지 않습니다. v2 DB는 P0 코드가 직접 열 수 없으므로 rollback은 전송 중단·백업 복구·별도 cache namespace 절차가 필요합니다. 실제 LLM 품질 및 운영 canary 전달은 이 PR의 안전 검증 범위 밖입니다.
