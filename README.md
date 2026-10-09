@@ -27,7 +27,7 @@ GitHub에서 스타를 준 저장소의 새로운 릴리스를 감지하고, <br
 
 ## 🧭 Kubernetes Ecosystem Intelligence 확장 계획
 
-현재 P0 구현은 starred repository의 **모든 unseen GitHub Release**를 수집하고 SQLite event/outbox에 보관합니다. 이후 Kubernetes/Cloud Native 프로젝트 분류, GHSA, Maintainer Announcement, 선택적 로컬 LLM 분석, Critical/High/Digest routing으로 확장할 계획입니다.
+현재 P0 구현은 starred repository의 최근 Release를 **제한된 페이지·실행 시간 예산** 안에서 incremental 수집하고 SQLite event/outbox에 보관합니다. 과거 페이지에 삽입되거나 발행 시각이 늦게 반영된 Release는 저장된 reconciliation 진행 상태를 통해 후속 실행에서 발견합니다. 한 번의 실행에서 전체 Release 이력을 확인했다는 뜻은 아닙니다. 이후 Kubernetes/Cloud Native 프로젝트 분류, GHSA, Maintainer Announcement, 선택적 로컬 LLM 분석, Critical/High/Digest routing으로 확장할 계획입니다.
 
 ```text
 Starred repositories
@@ -58,7 +58,7 @@ GitHub 백로그:
 
 ## 🎯 기능
 
-- 🔍 GitHub 스타 저장소에서 pagination을 통해 모든 unseen Release 감지 (GitHub Release ID 기준)
+- 🔍 GitHub 스타 저장소에서 최근 Release를 bounded pagination으로 수집하고 과거 페이지를 점진적으로 재확인 (GitHub Release ID 기준)
 - 📦 전체 starred repository 메타데이터를 `.cache/stars-inventory.json`으로 생성 (private 정보 노출 방지를 위해 artifact 업로드 없음)
 - ⏰ 하루 3번 자동 체크: 한국시간 08시, 14시, 17시 (UTC `23:00`, `05:00`, `08:00`)
 - 💾 `.cache/events.sqlite3`의 event/outbox로 pending 누적·중복 방지·실패 재시도
@@ -98,6 +98,20 @@ special_projects:
   - "kubernetes / kubernetes"
   - "grafana/grafana"
 
+collector:
+  per_page: 100
+  max_incremental_pages_per_repo: 3
+  max_incremental_pages_special_project: 5
+  bootstrap_pages: 1
+  known_only_pages_to_stop: 1
+  global_budget_seconds: 900
+  per_repo_budget_seconds: 60
+  reconciliation_pages_per_repo: 2
+  reconciliation_pages_special_project: 4
+  max_reconciliation_repositories_per_run: 10
+  reconciliation_shards: 8
+  special_reconciliation_shards: 2
+
 notification:
   min_release_count: 5
   special_project_always_notify: true
@@ -121,6 +135,8 @@ llm:
 | `special_project_always_notify` | 관심 프로젝트 릴리스는 임계값 미만이어도 알림 |
 | `first_run_notify` | 명시적으로 `true`로 설정할 때만 첫 수집의 기존 릴리스를 bootstrap 알림 대상으로 포함. 기본 `false` |
 | `feed.output_path` | 앱/로컬 LLM 연동용 deterministic JSON feed 경로 |
+
+Collector 기본값은 최근 경로를 일반 저장소 최대 3 page, 관심 프로젝트 최대 5 page로 제한하고, 신규 저장소는 최근 1 page를 기준선으로 사용합니다. 한 번의 수집 예산은 900초(설정 상한 1,200초), 저장소당 60초입니다. 과거 페이지 reconciliation은 일반 저장소 8회 중 1회에 최대 2 page, 관심 프로젝트 2회 중 1회에 최대 4 page를 확인하되 한 실행에서 최대 10개 저장소만 deep scan합니다. 미뤄진 저장소와 reconciliation 진행 상태는 다음 commit 실행에 이어집니다. 이 정책은 한 실행의 완전한 이력 스캔이 아니라 API 비용과 지연 발견 사이의 절충입니다. 자세한 복구·관측 방법은 [P0 런북](docs/P0_RUNBOOK.md)을 참고하세요.
 
 ## 📬 알림 형식
 
@@ -157,7 +173,7 @@ Feed schema v1의 배열은 서로 다른 시점을 나타냅니다.
 
 현재 알림을 분석하는 로컬 LLM은 `notification_batch[]`를 사용합니다. `new_releases[]`는 이번 실행의 신규 수집 분석, `releases[]`는 기존 discovery 소비자와 Knowledge exporter의 호환용입니다. Knowledge exporter는 신규 수집분만 내보내며 누적 알림 batch를 내보내지 않습니다.
 
-저장소별 수집 실패는 안전한 범주와 건수만 feed/Actions Step Summary에 남깁니다. 저장소 하나 이상의 수집이 성공하고 실패 비율이 50% 이하이며 모든 실패가 해당 저장소에 격리된 HTTP 404/429/5xx이면 `collection_degraded: true`로 정상 종료합니다. HTTP 401/403, 미분류 오류, 50% 초과 실패, 전체 저장소 실패, 상태 검증 오류 또는 Slack 전송 실패는 종료 코드 1입니다. 치명적 수집 실패에서는 정상 수집 저장소의 event를 보존하되 Slack 전송은 하지 않습니다. 응답 본문·헤더·토큰·요청 URL은 오류 정보에 포함하지 않습니다.
+저장소별 수집 실패는 안전한 범주와 건수만 feed/Actions Step Summary에 남깁니다. 한 저장소 이상 완료되고 **시작한 저장소 중** 실패 비율이 50% 이하이며 모든 실패가 해당 저장소에 격리된 HTTP 404/429/5xx이면 정상 종료합니다. 오류나 예산으로 미룬 저장소가 있으면 `collection_degraded: true`입니다. HTTP 401/403, 미분류 오류, 50% 초과 실패, 완료 저장소 0건, 상태 검증 오류 또는 Slack 전송 실패는 종료 코드 1입니다. 치명적 수집 실패에서는 정상 수집 저장소의 event를 보존하되 Slack 전송은 하지 않습니다. 오류 정보에는 응답 본문·헤더·토큰·요청 URL을 포함하지 않습니다. 로컬 feed는 여전히 Release 원본 정보를 포함하므로 신뢰 경계 안에서만 읽습니다.
 
 원칙:
 

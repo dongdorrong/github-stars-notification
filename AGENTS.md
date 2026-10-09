@@ -29,7 +29,7 @@
 ## 현재 동작 요약
 
 1. GitHub Actions가 `gh api /user/starred --paginate`로 star 저장소 목록을 `repos.txt`에 저장한다.
-2. Release collector가 저장소별 목록을 끝까지 페이지 조회하고 GitHub Release ID로 중복을 제거한다.
+2. Release collector가 저장소별 최근 목록을 bounded pagination으로 수집하고, 저장된 reconciliation 진행 상태로 과거 페이지를 점진적으로 재확인한다. GitHub Release ID로 중복을 제거하며 한 실행의 전체 이력 확인을 주장하지 않는다.
 3. `check_release.py`의 commit mode는 `.cache/events.sqlite3`의 event/outbox를 갱신한다. 기존 `.cache/releases.json`은 삭제·덮어쓰기 없이 마이그레이션 기준선으로만 읽는다.
 4. 임계값 미만 event는 outbox에 남아 다음 실행까지 누적된다. Slack 2xx 확인 후에만 delivered로 바뀌며 429/5xx/timeout은 재시도 대상이다.
 5. 수동 실행의 기본 preview는 수집 결과·feed를 보여주되 event DB, outbox, legacy cache, last notification을 변경하거나 Slack을 호출하지 않는다.
@@ -54,12 +54,12 @@ starred inventory
 우선순위:
 
 - P0 #4: durable event/outbox와 no-loss delivery
-- P0 #5: 모든 unseen Release incremental 수집
+- P0 #5: 최근 Release incremental 수집과 과거/backdated Release의 점진적 reconciliation
 - P0 #6: preview/concurrency/state safety
 - P1 #7~#10: project registry, GHSA, AI analysis, 확장 Slack routing
 - P2 #11~#12: maintainer announcements, visibility/Knowledge/CI hardening
 
-P0 작업을 시작할 때는 `docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`를 실행 기준으로 사용한다.
+`docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`는 P0 최초 구현의 실행 기록이다. Collector의 현재 bounded scan/reconciliation 계약과 운영 기준은 `docs/P0_RUNBOOK.md` 및 실제 `config.yaml`/코드가 우선한다. 최초 문서의 매 실행 exhaustive scan 설명을 현재 동작으로 인용하지 않는다.
 
 ## 상태와 AI의 강제 경계
 

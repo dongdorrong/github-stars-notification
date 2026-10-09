@@ -32,7 +32,7 @@ feed schema v1에는 다음 계약이 들어간다.
 - `llm_contract`: 로컬 LLM의 허용 작업과 변경하면 안 되는 상태·전달 경계
 - `mcp_contract`: GitHub MCP의 선택적 읽기 전용 수집 경계
 
-수집 오류가 격리된 HTTP 404/429/5xx이며 전체 저장소의 50% 이하이고 최소 하나가 성공했다면 feed의 `collection_degraded`는 `true`이고 실행은 성공한다. 401/403, 미분류 오류, 과반 실패 또는 전체 실패는 실행 오류다. 수집 오류 정보에는 안전한 범주·건수만 포함하며 원문 응답·토큰·URL을 넣지 않는다.
+수집 오류가 격리된 HTTP 404/429/5xx이며 **시작한 저장소 중** 50% 이하이고 최소 하나가 이번 bounded scan을 완료했다면 실행은 성공한다. 오류나 예산으로 미룬 저장소가 있으면 feed의 `collection_degraded`는 `true`다. 401/403, 미분류 오류, 시작한 저장소 중 과반 실패 또는 완료 저장소 0건은 실행 오류다. `repositories_completed`는 과거 전체 이력 확인을 뜻하지 않는다. 수집 오류 정보에는 안전한 범주·건수만 포함하며 원문 응답·토큰·URL을 넣지 않는다.
 
 P0 GitHub Actions는 잠재적으로 private starred repository metadata가 포함되는 feed/inventory를 artifact로 업로드하지 않는다. `.cache/release-feed.json`과 `.cache/stars-inventory.json`은 로컬 실행 산출물이다. public/private 분류가 강제되기 전에는 신뢰할 수 있는 소비자에게만 전달한다(#12 후속).
 

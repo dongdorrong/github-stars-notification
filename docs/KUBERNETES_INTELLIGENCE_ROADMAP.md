@@ -60,14 +60,17 @@ Gate:
 목표:
 
 - `latest_release` 단건 수집 제거
-- cursor 이후 모든 Release 수집
+- 실행 예산 안에서 최근 Release를 bounded incremental 수집하고, 과거/backdated Release를 저장된 reconciliation 진행 상태로 점진적으로 재확인
 - GitHub Release ID 기반 stable identity
 
 Gate:
 
-- 실행 사이 3개 Release가 발생하면 3개 모두 event store에 존재
-- pagination page 2 이후에도 unseen event를 찾음. 저장된 event를 만났다는 이유만으로 조기 중단하지 않음
+- 실행 사이 3개 Release가 발생하고 최근 scan 예산 안에 있으면 3개 모두 event store에 존재
+- 최근 scan의 page 2 이후와 reconciliation 대상 과거 page에서 unseen event를 찾음. 최근의 known-only page를 전체 이력 완료로 간주하지 않음
+- 시간/page 예산에 도달한 저장소를 deferred로 보고 다음 commit 실행에 공정하게 재개. 실패한 page는 reconciliation cursor를 전진시키지 않음
 - draft/prerelease metadata 보존
+
+현재 P0 기본값은 최근 일반/관심 최대 3/5 page, 새 저장소 bootstrap 1 page, 과거 reconciliation 일반/관심 최대 2/4 page, 한 실행의 deep scan 대상 최대 10개 저장소, 전체/저장소 수집 예산 900/60초다. Reconciliation은 일반 8회 중 1회, 관심 저장소 2회 중 1회 수준으로 저장소별 성공 방문 횟수에 따라 선택한다. 이는 운영 비용과 발견 지연 사이의 절충이며 정상 commit 실행과 state 보존이 이어져야 과거/backdated Release를 점진적으로 찾는다. 한 번의 실행에서 전체 이력을 소진한다는 완료 조건은 아니다. 운영 telemetry와 rollback 절차는 [P0 런북](P0_RUNBOOK.md)에 기록한다.
 
 ### P0-3. Preview / Concurrency / Bootstrap Safety — #6
 

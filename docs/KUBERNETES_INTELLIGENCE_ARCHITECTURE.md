@@ -207,7 +207,13 @@ prerelease
 author
 ```
 
-P0 collector는 page 1에서 멈추거나 최신 Release 하나만 읽지 않는다. 각 repository의 목록을 마지막 page까지 조회한 뒤 저장된 Release ID 및 legacy 기준선과 비교한다. API 정렬·페이지 이동에 안전한 완료 cursor가 증명되지 않은 상태에서 이미 본 Release 하나를 만나도 조기 중단하지 않는다. 수집 순서가 바뀌어도 동일 Release ID는 동일 event다.
+P0 collector는 최신 Release 단건만 읽지 않는다. 매 실행에서 최근 페이지를 bounded pagination으로 수집하고, 오래된 페이지는 저장된 reconciliation 진행 상태에 따라 후속 실행에서 점진적으로 재확인한다. 알려진 Release만 있는 최근 페이지를 만나면 recent scan을 멈출 수 있지만 이를 전체 이력 검증으로 해석하지 않는다. 발행 시각이 늦게 반영되거나 페이지 순서가 바뀐 Release는 reconciliation과 페이지 overlap으로 다시 확인한다. 수집 순서가 바뀌어도 동일 Release ID는 동일 event다. 실패한 페이지를 완료된 것으로 표시하거나 continuation을 전진시키지 않는다.
+
+Live 목록 adapter는 pin된 `PyGithub==2.2.0`의 page 응답 `_rawData`를 사용한다. `raw_data`가 유발할 수 있는 Release별 상세 GET N+1을 피하고 목록 page당 요청 1회로 제한한다. 이 내부 필드가 없으면 임의의 상세 호출로 fallback하지 않고 fail closed한다. SDK 업그레이드는 요청 수·page 정규화 회귀 테스트가 필요한 별도 호환성 변경이다.
+
+현재 P0의 기본 예산은 page당 100개, 최근 경로 일반/관심 저장소당 최대 3/5 page, 신규 저장소 bootstrap 1 page, 전체 수집 900초(설정 상한 1,200초), 저장소당 60초다. 기존 ID만 있는 완전한 최근 page 1개에서 recent 경로를 멈춘다. 초기화된 저장소의 과거 reconciliation은 안정적 SHA-256 shard와 저장소별 성공 방문 횟수로 선택하며 일반 8회 중 1회 최대 2 page, 관심 저장소 2회 중 1회 최대 4 page를 확인한다. 한 실행의 deep scan 대상은 최대 10개 저장소다. `state_metadata`의 `collector_next_repo_index`, `reconcile_visit:<repo>`, `reconciliation_cursor:<repo>`가 공정한 시작점과 과거 page 진행을 보존한다. 마지막 성공 page 1개를 겹쳐 다시 읽고 목록 끝에서는 page 1로 순환한다. 실패/예산/대상 수 상한으로 deep scan을 끝내지 못하면 해당 저장소의 방문 횟수는 전진하지 않는다. Preview는 이 진행을 운영 DB에 저장하지 않는다.
+
+이 계약은 빠른 recent 발견과 **조건부 eventual backdated 발견**을 제공한다. 반복된 성공 commit 실행, 보존된 DB/cache, 유한한 이력과 API 가용성이 전제이며 한 실행의 완전성이나 최대 발견 지연은 보장하지 않는다. Legacy cache가 없는 bootstrap에서 기본 `first_run_notify: false`이면 첫 page의 최대 숫자 Release ID를 과거 억제 경계로 사용하므로 이후 더 큰 ID의 backdated Release는 후보로 남는다. 숫자 ID가 없는 fixture에서만 `created_at` cutoff를 사용한다. 명시적 `first_run_notify: true`는 이 억제 경계를 설정하지 않는다. Legacy cache cutover는 별도 `legacy_cutover_published_at:<repo>` metadata에 날짜를 보존해 나중 deep page에도 적용한다. 어느 휴리스틱도 GitHub 정렬의 완전성을 증명하지 않으므로 cutover 수신 이력과 대조해야 한다. Live 요청은 socket timeout 15초/retry 0이며 POSIX main thread의 page fetch·정규화에는 전체/저장소 예산 중 이른 `SIGALRM` deadline을 적용한다. 중단된 page는 부분 결과를 버리고 deferred로 남긴다. 지원하지 않는 thread/platform 또는 기존 alarm과 충돌하면 fail closed한다. Fixture는 주입된 clock으로 page 경계에서 예산을 검증한다.
 
 ### 5.4 Security Advisory Collector
 
@@ -579,6 +585,8 @@ AI success/fallback/failure count
 
 로그에는 token, webhook, private event body를 남기지 않는다.
 
+P0 Release collector의 실제 feed/Step Summary는 `repositories_total/started/completed/deferred`, `reconciliation_deferred`, `pages_fetched`, `releases_observed`, `new_release_count`, `elapsed_seconds`, `collection_budget_exhausted`, `collection_success_count`, `collection_error_count`, `collection_degraded`, `collector_errors_by_type`를 사용한다. `repositories_completed`는 이번 실행의 bounded 경로 완료이며 전체 과거 이력 검증을 뜻하지 않는다. `reconciliation_deferred`는 최근 경로의 `repositories_deferred`와 별도다. 진행 로그는 raw repository 이름 대신 ordinal과 실행별 keyed short reference를 사용한다. 로컬 feed는 여전히 신뢰 경계 안의 Release facts를 포함하고 공개 artifact가 아니다.
+
 ## 10. 테스트 전략
 
 ### Unit
@@ -615,7 +623,7 @@ AI success/fallback/failure count
 ## 11. 마이그레이션
 
 1. 기존 `.cache/releases.json`을 read-only로 읽어 repo/tag/published 기준선을 만든다. 과거 cache에는 Release ID가 없으므로 과거 ID를 복원했다고 주장하지 않는다.
-2. 기존 값은 `migrated_from_legacy_cache=true` metadata로 기록한다.
+2. DB의 `legacy_migrated`와 저장소별 `legacy_cutover_published_at:<repo>` metadata에 일회성 cutover 상태와 날짜 경계를 기록한다.
 3. 기존 legacy cache 파일을 사용하는 첫 cutover run은 Slack을 보내지 않는다. Cache miss에서는 `first_run_notify: false`가 안전 기본값이고, 명시적 `true`는 bootstrap 전송을 허용한다.
 4. event DB가 정상 검증된 뒤 legacy cache write를 중단한다.
 5. 최소 한 주기 동안 compatibility report로 old/new detection 결과를 비교한다.
@@ -627,7 +635,7 @@ AI success/fallback/failure count
 | --- | --- | --- |
 | Epic | #3 | 전체 Intelligence Watcher |
 | P0 | #4 | durable event/outbox와 no-loss delivery |
-| P0 | #5 | 모든 unseen Release incremental 수집 |
+| P0 | #5 | bounded recent incremental 수집과 과거/backdated Release의 점진적 reconciliation |
 | P0 | #6 | preview/concurrency/state safety |
 | P1 | #7 | Kubernetes 분류와 project registry |
 | P1 | #8 | GHSA/Security Advisory collector |

@@ -23,7 +23,7 @@ GitHub에서 star한 저장소의 Release를 주기적으로 수집하고, 결�
 ## 3. 현재 실행 흐름
 
 1. workflow가 `gh api /user/starred --paginate`로 starred repository 목록과 inventory를 로컬 파일에 만든다.
-2. Release collector가 각 repository의 모든 page를 끝까지 읽고 GitHub Release ID(`github:release:<id>`)로 중복을 제거한다. 저장소별 API 오류는 다른 저장소와 분리하고 그 저장소의 부분 page 결과는 확정하지 않는다. 격리된 HTTP 404/429/5xx가 전체의 50% 이하이고 최소 한 저장소가 성공했다면 `collection_degraded: true`와 exit 0이다. 401/403, 미분류 오류, 과반 실패, 전체 실패는 exit 1이며 Slack을 억제한다. 성공 저장소의 event는 보존한다.
+2. Release collector가 최근 페이지를 bounded scan하고 저장된 reconciliation 진행 상태로 과거/backdated Release를 후속 실행에서 재확인한다. 한 실행에서 모든 과거 페이지를 읽지는 않는다. GitHub Release ID(`github:release:<id>`)로 중복을 제거한다. 저장소별 API 오류는 다른 저장소와 분리한다. 실패한 page의 부분 결과는 버리되 이전에 완료한 page의 event는 보존하며 실패 page의 cursor는 전진시키지 않는다. 격리된 HTTP 404/429/5xx가 **시작한 저장소 중** 50% 이하이고 최소 한 저장소가 완료됐다면 exit 0이다. 오류 또는 deferred가 있으면 `collection_degraded: true`다. 401/403, 미분류 오류, 과반 실패, 완료 저장소 0건은 exit 1이며 Slack을 억제한다.
 3. pipeline이 `.cache/events.sqlite3`의 `events`와 `notification_outbox`를 갱신한다. `.cache/releases.json`은 매번 read-only로 검증하되 ID가 없는 과거 기준선은 DB marker에 따라 최초 저장소 초기화에만 적용하며 원본을 보존한다.
 4. `min_release_count`는 실행별 신규 건수가 아니라 미전달 pending 누적 수에 적용된다. 특별 프로젝트가 pending이면 현재 정책상 즉시 후보가 된다.
 5. commit + `--send-slack`이면 Python notifier가 Slack을 호출한다. 2xx 확인 후 해당 chunk의 event만 `DELIVERED`로 갱신한다. 429/5xx/timeout은 실패 상태와 재시도 metadata를 남긴다.
@@ -38,7 +38,7 @@ Feed schema v1의 배열은 분리된 계약이다.
 | `notification_batch[]`, `notification_batch_count` | `slack_chunks[].event_ids`와 순서까지 일치하는 생성 알림 batch. LLM의 현재 알림 분석 입력이다. |
 | `pending_count` | 지연 재시도를 포함한 **전송 후** 미전달 수. `pending_before_delivery_count`는 같은 기준의 전송 전 수다. |
 
-Feed와 Step Summary는 `scanned_repos`, `collection_success_count`, `collection_error_count`, `collection_degraded`, `collector_errors_by_type`에 대응하는 수집 통계와 안전한 HTTP 범주만 남긴다. 오류 응답 본문·헤더·토큰·요청 URL은 남기지 않는다. Release body/title은 untrusted input이며 로컬 feed의 public/private 필터링은 아직 보장하지 않는다.
+Feed와 Step Summary는 `repositories_total/started/completed/deferred`, 별도 `reconciliation_deferred`, `pages_fetched`, `releases_observed`, `new_release_count`, `elapsed_seconds`, `collection_budget_exhausted`, `collection_success_count`, `collection_error_count`, `collection_degraded`, `collector_errors_by_type`에 대응하는 수집 통계와 안전한 HTTP 범주를 남긴다. 진행 로그는 저장소 실명을 쓰지 않고 실행별 ordinal과 짧은 keyed reference를 사용한다. 오류 응답 본문·헤더·토큰·요청 URL은 남기지 않는다. 로컬 feed의 Release body/title/URL은 여전히 untrusted input이며 public/private 필터링도 보장하지 않는다.
 
 Draft는 알림 대상에서 제외하며, prerelease는 metadata를 보존하고 현재 Release 정책에 포함한다. Live Release에는 숫자 ID가 필수다. 기존 ID 없는 fixture만 deterministic fixture 전용 fallback ID를 사용한다.
 
@@ -53,6 +53,8 @@ Draft는 알림 대상에서 제외하며, prerelease는 metadata를 보존하�
 
 Workflow는 `contents: read`, 고정 concurrency group, `cancel-in-progress: false`, job timeout을 사용한다. Preview는 DB cache를 restore해 읽을 수 있지만 새 state cache를 저장하지 않으며 Slack secret을 주입받지 않는다. Commit은 legacy cache를 read-only로 restore하고 별도 DB cache namespace에 유효한 SQLite 파일을 저장한다. Slack 실패로 step이 실패해도 유효한 DB라면 save를 시도한다.
 
+Collector 기본값은 `per_page: 100`, recent 일반/관심 최대 3/5 page, 새 저장소 bootstrap 1 page, 알려진 ID만 있는 page 1개에서 recent 경로 중단, 전체/저장소 예산 900/60초다. 초기화된 저장소의 과거 reconciliation은 일반 8회 중 1회에 최대 2 page, 관심 프로젝트 2회 중 1회에 최대 4 page를 확인하며 한 실행의 deep scan 대상은 최대 10개 저장소다. `collector_next_repo_index`, `reconcile_visit:<repo>`, `reconciliation_cursor:<repo>`가 공정한 재개와 한 page overlap을 보존한다. Preview는 이 metadata를 운영 DB에 저장하지 않는다. 세부 예산·복구 기준은 [P0 런북](P0_RUNBOOK.md)에 있다.
+
 CLI의 `--sleep-seconds`/`--no-sleep`은 이전 호출과의 호환을 위한 deprecated no-op이며 새 collector의 repository pacing을 조정하지 않는다.
 
 Actions cache는 **영구 상태 저장소가 아니다**. Eviction/stale restore/save 실패나 Slack 성공 직후 DB ack·cache save 전에 종료되면 중복 또는 상태 소실이 생길 수 있다. Concurrency는 실행 중인 run을 직렬화하지만 대기 run의 실행 순서·모두 실행됨을 보장하지 않는다. 따라서 이 구현은 exactly-once가 아니다.
@@ -60,7 +62,7 @@ Actions cache는 **영구 상태 저장소가 아니다**. Eviction/stale restor
 ## 5. 첫 실행과 migration
 
 - `notification.first_run_notify` 기본값은 `false`다. cache miss나 처음 보는 repository의 기존 Release를 baseline으로 기록하고 대량 Slack 전송을 막는다.
-- 기존 `.cache/releases.json`의 repo/tag/published는 과거 event ID가 아니라 migration 경계값이다. Migration marker는 DB에 한 번만 기록하며 legacy 파일이 있는 첫 cutover 실행은 Slack을 보내지 않는다. Legacy 파일이 없고 `first_run_notify: true`를 명시한 경우 첫 inventory 알림은 가능하다.
+- 기존 `.cache/releases.json`의 repo/tag/published는 과거 event ID가 아니라 migration 경계값이다. 최초 migration은 그 실행의 수집 성공 여부와 무관하게 **모든 legacy 저장소**의 published cutoff를 `legacy_cutover_published_at:<repo>`에 기록한다. 실패·deferred 저장소도 이후 첫 수집에 이 경계를 사용하며 legacy 파일이 없어져도 유지된다. 전역 migration marker만 있는 기존 P0 DB에서 미초기화 저장소의 cutoff가 빠졌다면 legacy 파일이 남아 있을 때만 보충할 수 있다. 파일과 metadata가 모두 없으면 원래 경계를 복원할 수 없다. Legacy 파일이 있는 첫 cutover 실행은 Slack을 보내지 않는다. Legacy 파일이 없고 `first_run_notify: true`를 명시한 경우 첫 inventory 알림은 가능하며 bootstrap 억제 경계를 설정하지 않는다.
 - malformed legacy cache나 SQLite DB/schema는 빈 상태로 자동 대체하지 않고 실패한다. 원본 cache는 삭제·덮어쓰지 않는다.
 - 기본 브랜치 운영 rollout 및 rollback은 [P0 런북](P0_RUNBOOK.md)의 백업·대조 절차를 따른다. 오래된 legacy cache만으로 이전 workflow를 바로 재가동하면 중복 알림 위험이 있다.
 

@@ -261,8 +261,12 @@ class P0AcceptanceTest(unittest.TestCase):
         ]}}), encoding="utf-8")
         source = FixtureReleaseSource(fixture)
         seen = {"github:release:2"}
-        collected = collect_releases(["owner/repo"], source, seen_event_ids=seen)
-        self.assertEqual([item.event_id for item in collected.events], ["github:release:3", "github:release:1"])
+        collected = collect_releases(["owner/repo"], source, seen_event_ids=seen,
+                                     initialized_repos={"owner/repo"},
+                                     config={"known_only_pages_to_stop": 2})
+        # Known IDs remain observable so drafts/edits can refresh in the store.
+        self.assertEqual([item.event_id for item in collected.events],
+                         ["github:release:3", "github:release:2", "github:release:1"])
 
     def test_cli_preview_fixture_is_token_free_and_state_free(self) -> None:
         repos, fixture, config, feed = self.fixture_paths({"owner/repo": [release(1)]})
