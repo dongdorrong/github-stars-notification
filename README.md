@@ -20,13 +20,14 @@ GitHub에서 스타를 준 저장소의 새로운 릴리스를 감지하고, <br
 - 단계별 구현 로드맵: [`docs/KUBERNETES_INTELLIGENCE_ROADMAP.md`](docs/KUBERNETES_INTELLIGENCE_ROADMAP.md)
 - 결정적 상태·AI 경계 ADR: [`docs/adr/0001-deterministic-event-state-and-ai-boundary.md`](docs/adr/0001-deterministic-event-state-and-ai-boundary.md)
 - Codex P0 UltraGoal: [`docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md`](docs/CODEX_ULTRAGOAL_KUBERNETES_INTELLIGENCE.md)
+- P0 운영/마이그레이션 런북: [`docs/P0_RUNBOOK.md`](docs/P0_RUNBOOK.md)
 - GitHub MCP + 로컬 LLM 연동 설계: [`docs/GITHUB_MCP_LOCAL_LLM.md`](docs/GITHUB_MCP_LOCAL_LLM.md)
 - 보안 레이어 후속 조치: [`docs/SECURITY_LAYERING_NOTES.md`](docs/SECURITY_LAYERING_NOTES.md)
 - RAG/Knowledge Store 전환 TODO: [`docs/rag-todo.md`](docs/rag-todo.md)
 
 ## 🧭 Kubernetes Ecosystem Intelligence 확장 계획
 
-현재 구현은 starred repository의 latest Release 감지와 Slack 알림에 집중합니다. 다음 단계에서는 Kubernetes/Cloud Native 생태계의 공식 Release, GitHub Security Advisory, Maintainer Announcement를 수집하고, 결정적 정책과 선택적 로컬 LLM 분석을 거쳐 Critical/High/Digest로 전달하는 구조로 확장합니다.
+현재 P0 구현은 starred repository의 **모든 unseen GitHub Release**를 수집하고 SQLite event/outbox에 보관합니다. 이후 Kubernetes/Cloud Native 프로젝트 분류, GHSA, Maintainer Announcement, 선택적 로컬 LLM 분석, Critical/High/Digest routing으로 확장할 계획입니다.
 
 ```text
 Starred repositories
@@ -44,7 +45,7 @@ Starred repositories
 - LLM은 신규/중복 판정, 상태 변경, Slack 전송 여부를 결정하지 않습니다.
 - Slack 성공 전에는 이벤트를 delivered 처리하지 않습니다.
 - 수동 preview 실행은 운영 상태를 소비하지 않습니다.
-- private/internal repository 정보는 public artifact와 Knowledge export에서 기본 제외합니다.
+- P0 workflow는 inventory/feed artifact를 업로드하지 않습니다. private/internal repository 정보의 public export 기본 제외는 #12 후속 작업입니다.
 
 GitHub 백로그:
 
@@ -53,18 +54,18 @@ GitHub 백로그:
 - P1: [#7 project registry](https://github.com/dongdorrong/github-stars-notification/issues/7), [#8 GHSA](https://github.com/dongdorrong/github-stars-notification/issues/8), [#9 local LLM](https://github.com/dongdorrong/github-stars-notification/issues/9), [#10 Slack routing](https://github.com/dongdorrong/github-stars-notification/issues/10)
 - P2: [#11 maintainer announcements](https://github.com/dongdorrong/github-stars-notification/issues/11), [#12 visibility/Knowledge/CI](https://github.com/dongdorrong/github-stars-notification/issues/12)
 
-> 이 절은 목표 설계와 백로그를 설명합니다. 현재 운영 동작은 아래 문서와 코드에 기술된 latest Release/cache 기반 구현입니다.
+> 위 다이어그램은 Epic #3의 목표 설계입니다. 이번 P0의 구현 범위는 Release 수집·상태·전달 안전성(#4~#6)이며 #7~#12는 아직 구현하지 않았습니다.
 
 ## 🎯 기능
 
-- 🔍 GitHub 스타 저장소의 최신 릴리스 자동 감지
-- 📦 전체 starred repository 메타데이터를 `.cache/stars-inventory.json`으로 생성하고 `starred-inventory` artifact로 보관
+- 🔍 GitHub 스타 저장소에서 pagination을 통해 모든 unseen Release 감지 (GitHub Release ID 기준)
+- 📦 전체 starred repository 메타데이터를 `.cache/stars-inventory.json`으로 생성 (private 정보 노출 방지를 위해 artifact 업로드 없음)
 - ⏰ 하루 3번 자동 체크: 한국시간 08시, 14시, 17시 (UTC `23:00`, `05:00`, `08:00`)
-- 💾 `.cache/releases.json` 기반 중복 알림 방지
+- 💾 `.cache/events.sqlite3`의 event/outbox로 pending 누적·중복 방지·실패 재시도
 - 💬 Slack Incoming Webhook 알림
 - ⭐ 관심 프로젝트 강조 및 즉시 알림 정책
 - 🧾 다른 앱/로컬 LLM이 읽을 수 있는 `.cache/release-feed.json` 생성
-- 🧪 token 없이 fixture로 로컬 테스트 가능
+- 🧪 기본 preview와 token-free fixture로 운영 상태·Slack을 변경하지 않고 로컬 테스트 가능
 
 <div align="center">
 
@@ -100,7 +101,7 @@ special_projects:
 notification:
   min_release_count: 5
   special_project_always_notify: true
-  first_run_notify: true
+  first_run_notify: false
   max_slack_text_length: 35000
 
 feed:
@@ -116,9 +117,9 @@ llm:
 
 | 설정 | 의미 |
 | --- | --- |
-| `min_release_count` | 일반 릴리스가 이 개수 이상 모이면 Slack 알림 |
+| `min_release_count` | 미전달 pending 릴리스가 이 개수 이상 누적되면 Slack 알림 후보 |
 | `special_project_always_notify` | 관심 프로젝트 릴리스는 임계값 미만이어도 알림 |
-| `first_run_notify` | 캐시가 없는 첫 실행에서 현재 릴리스 목록을 알림으로 보낼지 여부 |
+| `first_run_notify` | 명시적으로 `true`로 설정할 때만 첫 수집의 기존 릴리스를 bootstrap 알림 대상으로 포함. 기본 `false` |
 | `feed.output_path` | 앱/로컬 LLM 연동용 deterministic JSON feed 경로 |
 
 ## 📬 알림 형식
@@ -126,29 +127,23 @@ llm:
 새로운 릴리스가 정책을 만족하면 Slack 메시지가 전송됩니다.
 
 ```text
-🚀 새로운 릴리스 5개를 확인했습니다
-
-💡 중요한 프로젝트가 있다면 관심 프로젝트로 등록해보세요!
-• config.yaml의 special_projects에 등록하면 ⭐ 로 강조됩니다
-• notification 정책으로 임계값과 첫 실행 동작을 조정할 수 있습니다
-
----
-
-⭐ *grafana* / *grafana* <release-url|`v12.0.0`> - 26.06.20
-*kubernetes* / *kubernetes* <release-url|`v1.34.0`> - 26.06.20
+🚀 *새로운 릴리스 2개를 확인했습니다*
+• ⭐ grafana/grafana <https://github.com/grafana/grafana/releases/tag/v12.0.0|`v12.0.0`> — Release v12.0.0 (2026-06-20) [github:release:120001]
+• kubernetes/kubernetes <https://github.com/kubernetes/kubernetes/releases/tag/v1.34.0|`v1.34.0`> (2026-06-20) [github:release:120002]
 ```
 
 표시 항목:
 
-- 저장소 이름 (`*organization* / *repository*`)
+- 저장소 이름 (`owner/repo`)
 - 릴리스 태그 링크
 - 릴리스 이름(태그와 다를 때만)
-- 발행 날짜 (`YY.MM.DD`)
+- 발행 날짜 (`YYYY-MM-DD`)
+- stable event ID (`github:release:<id>`)
 - 관심 프로젝트 `⭐`
 
 ## 🧾 Release feed / 로컬 LLM 연동
 
-`check_release.py`는 Slack 전송 여부와 무관하게 `.cache/release-feed.json`을 생성합니다. 이 파일은 다른 로컬 앱이나 로컬 LLM이 읽는 안전한 연결 지점입니다.
+`check_release.py`는 Slack 전송 여부와 무관하게 `.cache/release-feed.json`을 생성합니다. 이 파일은 신뢰할 수 있는 로컬/비공개 앱이나 로컬 LLM의 읽기 연결 지점입니다. Release title/body/URL은 외부 입력이므로 프롬프트·로그·공개 export에 그대로 신뢰하거나 게시하지 마세요.
 
 원칙:
 
@@ -162,28 +157,32 @@ llm:
 
 생성된 `.cache/release-feed.json`을 GitHub API 재호출이나 Slack 전송 없이 중앙 Knowledge Store 계약(JSONL)으로 내보냅니다.
 
+> 현재 exporter는 입력 Release를 공개 데이터로 판별·필터링하지 않습니다. private/internal 저장소가 섞인 feed에는 사용하지 말고, 신뢰할 수 있는 public-only 입력을 확인한 경우에만 실행하세요. 공개 범위 강제는 #12 후속 작업입니다.
+
 ```bash
 ./scripts/export_knowledge_jsonl.py \
   --feed .cache/release-feed.json \
   --output /tmp/github-stars.knowledge.jsonl
 ```
 
-산출물은 `fordongdorrong`의 `fordong knowledge validate-export` / `import --dry-run`으로 검증합니다.
+산출물은 `fordongdorrong` 환경에서 `fordong knowledge validate-export` / `import --dry-run`으로 검증합니다. 이 저장소의 로컬 검증에는 해당 외부 CLI가 포함되지 않습니다.
 
 ## 🚀 실행
 
 ### GitHub Actions
 
-워크플로우는 schedule 또는 Actions 탭의 `Run workflow`로 실행됩니다. 수동 실행은 기본적으로 Slack 전송을 억제하며, 실제 알림까지 보내려면 `send_slack=true`를 선택합니다.
+워크플로우는 schedule 또는 Actions 탭의 `Run workflow`로 실행됩니다. schedule은 commit mode로 상태를 갱신합니다. 수동 실행은 기본 `preview`이며 DB/outbox/legacy cache/last notification을 변경하거나 Slack을 호출하지 않습니다. 수동 commit은 운영 상태를 변경하므로 런북의 rollout 절차를 먼저 확인하세요.
 
-매 실행마다 `starred-inventory` artifact에 다음 파일을 남깁니다.
+매 실행에서 다음 로컬 파일을 만들지만, private starred repository 정보가 포함될 수 있어 artifact로 업로드하지 않습니다.
 
 - `repos.txt`: `owner/repo` 전체 목록
 - `.cache/stars-inventory.json`: description/topics/language/update 시각 등 분류용 메타데이터
 
+수동 `commit`은 기본 브랜치에서만 허용됩니다. commit 경로는 상태 변경과 정책이 충족될 경우 Slack 전송을 함께 수행합니다. feature branch에서 검증할 때는 `preview`만 사용하세요. Action의 `.cache/events.sqlite3` 보존은 cache에 의존하므로 영구 내구성이나 exactly-once 전달 보장은 아닙니다.
+
 ### 로컬 fixture 테스트
 
-실제 GitHub token 없이 동작을 확인할 수 있습니다.
+실제 GitHub token 없이 preview 수집을 확인할 수 있습니다. 아래 fixture의 숫자 `id`는 live GitHub Release ID에 대응합니다.
 
 ```bash
 cat > /tmp/repos.txt <<'EOF'
@@ -194,6 +193,7 @@ EOF
 cat > /tmp/releases.json <<'EOF'
 {
   "grafana/grafana": {
+    "id": 120001,
     "tag_name": "v12.0.0",
     "name": "Release v12.0.0",
     "published_at": "2026-06-20 10:00:00",
@@ -205,18 +205,16 @@ EOF
 python3 .github/scripts/check_release.py \
   --repos-file /tmp/repos.txt \
   --fixture-releases /tmp/releases.json \
-  --cache-path /tmp/releases-cache.json \
+  --state-db /tmp/github-stars-preview.sqlite3 \
+  --mode preview \
   --feed-path /tmp/release-feed.json \
   --github-output /tmp/github-output.txt \
   --no-sleep
 ```
 
-### 실제 로컬 실행
+### 실제 로컬 preview
 
 ```bash
-export GH_TOKEN=...
-export GITHUB_OUTPUT=/tmp/github-output.txt
-
 mkdir -p .cache
 
 gh api /user/starred --paginate \
@@ -225,16 +223,17 @@ gh api /user/starred --paginate \
 jq -s 'sort_by(.full_name)' .cache/stars-inventory.jsonl > .cache/stars-inventory.json
 jq -r '.[].full_name' .cache/stars-inventory.json > repos.txt
 
-python3 .github/scripts/check_release.py
+python3 .github/scripts/check_release.py --mode preview
 ```
 
-토큰과 webhook은 shell history, `.env`, Git 커밋에 남기지 않습니다.
+위 명령은 인증된 `gh` 및 스크립트용 `GH_TOKEN`이 실행 환경에 **이미** 주입된 경우에만 동작합니다. 이 live 예시는 token-free fixture 검증 범위에 포함되지 않으므로 인증된 환경에서 별도 확인이 필요합니다. 토큰과 webhook은 shell history, `.env`, Git 커밋에 남기지 않습니다. 실제 Slack 전송은 이 예시에 포함하지 않습니다. 상태 전이, 마이그레이션, rollback, 잔여 위험은 [P0 런북](docs/P0_RUNBOOK.md)을 참조하세요.
 
 ## ✅ 검증
 
 ```bash
 python3 -m py_compile .github/scripts/check_release.py
 python3 -m unittest discover -s tests -v
+git diff --check
 ```
 
 ---

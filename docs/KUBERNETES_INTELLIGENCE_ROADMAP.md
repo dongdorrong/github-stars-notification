@@ -3,9 +3,11 @@
 > Epic: #3  
 > Architecture: [KUBERNETES_INTELLIGENCE_ARCHITECTURE.md](KUBERNETES_INTELLIGENCE_ARCHITECTURE.md)
 
+P0(#4~#6)의 구현·운영 경계는 [P0 런북](P0_RUNBOOK.md)을 기준으로 한다. P1/P2(#7~#12)는 아래의 향후 계획이며 P0에서 구현하지 않는다.
+
 ## 1. 목표
 
-현재의 latest Release 기반 알림기를 다음 단계로 안전하게 확장한다.
+기존 latest Release 기반 알림기를 다음 단계로 안전하게 확장한다.
 
 ```text
 Release notification script
@@ -64,7 +66,7 @@ Gate:
 Gate:
 
 - 실행 사이 3개 Release가 발생하면 3개 모두 event store에 존재
-- pagination page 2에서도 unseen event를 찾음
+- pagination page 2 이후에도 unseen event를 찾음. 저장된 event를 만났다는 이유만으로 조기 중단하지 않음
 - draft/prerelease metadata 보존
 
 ### P0-3. Preview / Concurrency / Bootstrap Safety — #6
@@ -99,9 +101,9 @@ Gate:
 
 ### P0 완료 후 유지해야 할 호환성
 
-- 기존 `config.yaml`의 `special_projects`는 초기 project registry로 migration 가능해야 한다.
+- 기존 `config.yaml`의 `special_projects` 정책은 P0에서도 유지한다. project registry migration은 #7에서 다룬다.
 - 기존 fixture CLI 사용자는 token 없이 계속 테스트할 수 있어야 한다.
-- 기존 release feed 소비자는 최소 migration 기간 동안 호환 필드 또는 명시적 schema 변경 안내를 받아야 한다.
+- 기존 release feed 소비자는 호환 필드를 확인하고 새 pending/outbox 필드를 선택적으로 처리한다. 공개 feed로 배포하는 것은 #12 visibility 정책이 정해진 뒤 검토한다.
 - schedule 시각은 의도적 변경이 아니면 유지한다.
 
 ## 4. P1-A — Kubernetes Projects and Security
@@ -208,14 +210,15 @@ Gate:
 - [x] 목표 아키텍처 정의
 - [x] 상태·AI 경계 ADR 작성
 - [x] Epic 및 하위 이슈 생성
-- [ ] digest window와 prerelease 기본값 결정
+- [x] P0 prerelease metadata 보존 및 Release 알림 포함 정책 결정
+- [ ] P1 digest window 결정
 - [ ] project tier 초기 목록 검토
 
 ### Build
 
-- [ ] P0 event/outbox 구현
-- [ ] incremental release collector 구현
-- [ ] preview/commit workflow 구현
+- [x] P0 event/outbox 구현
+- [x] incremental release collector 구현
+- [x] preview/commit workflow 구현
 - [ ] project registry/classifier 구현
 - [ ] advisory collector 구현
 - [ ] AI adapter/schema 구현
@@ -223,12 +226,12 @@ Gate:
 
 ### Test
 
-- [ ] legacy behavior characterization
-- [ ] state transition tests
-- [ ] pagination tests
-- [ ] threshold accumulation tests
-- [ ] preview no-write tests
-- [ ] Slack retry tests
+- [x] legacy behavior characterization
+- [x] state transition tests
+- [x] pagination tests
+- [x] threshold accumulation tests
+- [x] preview no-write tests
+- [x] Slack retry tests
 - [ ] private visibility tests
 - [ ] AI schema/fallback tests
 
@@ -245,7 +248,7 @@ Gate:
 - [x] roadmap
 - [x] ADR
 - [x] Codex UltraGoal
-- [ ] P0 migration/runbook
+- [x] P0 migration/runbook
 - [ ] event/feed schema reference
 - [ ] local LLM setup/runbook
 
@@ -305,10 +308,8 @@ IN SCOPE
 - #6 preview/concurrency safety
 - 관련 tests/docs/workflow
 
-STRETCH
-- #7 registry schema와 기존 special_projects migration 기반
-
 OUT OF SCOPE
+- #7 project registry/classifier
 - #8 live GHSA collector
 - #9 production local LLM
 - #10 full Slack redesign
@@ -353,10 +354,12 @@ P0는 상태 모델 변경 폭이 크므로 한 번에 P1까지 얹지 않는다
 P0 PR은 다음 rollback을 가능하게 해야 한다.
 
 - legacy `check_release.py` 동작을 tag/commit으로 즉시 복구
-- SQLite DB는 별도 `.cache` 파일로 유지
+- SQLite DB는 별도 `.cache/events.sqlite3` 파일로 유지
 - migration은 원본 `.cache/releases.json`을 삭제하지 않음
-- preview와 schedule mode를 config/flag로 전환 가능
+- 수동 preview와 schedule commit mode는 명시적 flag/workflow input으로 구분
 - Slack notifier cutover 전에 old/new 결과 비교 report 보존
+
+**운영 rollback 주의:** legacy `.cache/releases.json`은 P0 이후 갱신되지 않으므로 이전 workflow를 그대로 재가동하면 오래된 cache 기준으로 중복 Slack 전송이 생길 수 있다. 먼저 새 전송을 멈추고 DB/캐시 및 전달 이력을 백업·대조한 뒤 사람이 전환 여부를 결정한다. Actions cache는 영구 DB가 아니며 stale restore/eviction/save 실패 또는 Slack 성공 직후 DB 반영 실패로 exactly-once를 보장하지 못한다.
 
 ## 12. 완료 보고 형식
 

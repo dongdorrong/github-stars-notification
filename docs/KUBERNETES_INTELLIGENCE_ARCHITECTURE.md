@@ -1,6 +1,6 @@
 # Kubernetes Ecosystem Intelligence Watcher — Architecture
 
-> Status: Proposed  
+> Status: P0 Release 경로 구현, P1/P2 설계안
 > Updated: 2026-10-09  
 > Epic: #3
 
@@ -23,6 +23,10 @@
 7. **운영 경로와 실험 경로를 분리한다.** GitHub Actions 운영 경로는 결정적이고 재현 가능해야 하며, 로컬 LLM/Codex 실험 실패가 collector를 중단시키지 않는다.
 
 ## 3. 범위
+
+### 구현 단계 구분
+
+P0(#4~#6)는 GitHub Release ID 기반 수집, SQLite event/outbox, pending 누적, Slack 응답 확인 후 acknowledgement, preview/commit 분리를 구현한다. 아래 registry, GHSA, announcement, AI 분석, Critical/High/Digest routing, visibility/Knowledge 강화는 #7~#12의 **목표 설계**이며 P0 운영 기능이 아니다. 구현된 정확한 CLI/상태 경계는 [P0 런북](P0_RUNBOOK.md)을 따른다.
 
 ### 포함
 
@@ -203,7 +207,7 @@ prerelease
 author
 ```
 
-Repository별 cursor는 최종 API page가 아니라 event store에 저장된 Release ID/시각을 기준으로 한다. 수집 순서가 바뀌어도 동일 Release ID는 동일 event다.
+P0 collector는 page 1에서 멈추거나 최신 Release 하나만 읽지 않는다. 각 repository의 목록을 마지막 page까지 조회한 뒤 저장된 Release ID 및 legacy 기준선과 비교한다. API 정렬·페이지 이동에 안전한 완료 cursor가 증명되지 않은 상태에서 이미 본 Release 하나를 만나도 조기 중단하지 않는다. 수집 순서가 바뀌어도 동일 Release ID는 동일 event다.
 
 ### 5.4 Security Advisory Collector
 
@@ -301,7 +305,7 @@ Collector별 원본 차이를 다음 공통 envelope로 감싼다.
 
 ### 5.7 Event Store / Outbox
 
-1차 구현은 SQLite를 사용한다.
+P0 구현은 `.cache/events.sqlite3`의 SQLite `events`, `notification_outbox`, `state_metadata`를 사용한다. 아래 SQL과 `ai_analyses`는 목표 아키텍처의 예시이며 실제 P0 schema는 `starwatch/event_store.py`를 기준으로 한다. AI 분석 테이블은 #9 범위다.
 
 권장 테이블:
 
@@ -344,7 +348,7 @@ CREATE TABLE ai_analyses (
 );
 ```
 
-Notification state:
+목표 notification state:
 
 ```text
 DISCOVERED
@@ -438,7 +442,7 @@ OpenAI-compatible /chat/completions
 
 ### 5.10 Slack Notifier
 
-Routing:
+P1 #10 목표 routing:
 
 - `CRITICAL`: 즉시 개별 메시지
 - `HIGH`: 즉시 또는 짧은 묶음
@@ -447,7 +451,7 @@ Routing:
 
 전달 규칙:
 
-1. outbox에서 due event를 lease한다.
+1. outbox에서 due event를 선택한다.
 2. Slack payload를 구성한다.
 3. 외부 title/body의 `<`, `>`, `&`와 mention syntax를 escape한다.
 4. Slack HTTP 응답을 확인한다.
@@ -455,6 +459,8 @@ Routing:
 6. 429는 `Retry-After`를 사용한다.
 7. timeout/5xx는 `DELIVERY_FAILED`로 기록한다.
 8. 재시도 시 동일 event가 별도 row로 중복 생성되지 않는다.
+
+P0는 기존 Release digest 형식을 유지하면서 이 중 **Slack 성공 후 acknowledgement와 실패 재시도**만 구현한다. CRITICAL/HIGH 개별 routing, AI 기반 우선순위, 완전한 lease 운영은 #10 이후 범위다.
 
 ### 5.11 Knowledge Export
 
@@ -476,7 +482,7 @@ Knowledge export는 read-only다.
 - outbox 상태 변경
 - token/webhook/private metadata 무조건 노출
 
-Private/internal event는 기본 export 대상이 아니다.
+Private/internal event의 public export 차단은 #12 목표다. P0 workflow는 잠재적으로 민감한 inventory/feed artifact 업로드를 하지 않는다. 로컬 feed/inventory에는 이 보장을 적용했다고 가정하지 말고 신뢰할 수 있는 소비자에게만 제공한다.
 
 ## 6. 실행 모델
 
@@ -489,9 +495,9 @@ schedule/workflow_dispatch
   -> event DB restore
   -> normalize/upsert
   -> policy
-  -> optional AI
+  -> optional AI (P1)
   -> notifier
-  -> DB/feed/artifact save
+  -> DB cache save (commit only), local feed
 ```
 
 필수 workflow 보호:
@@ -545,8 +551,8 @@ Pull 방식은 인바운드 포트 노출을 피하고 로컬 모델과 state를
 - `GH_PAT`, `SLACK_WEBHOOK_URL`, LLM API key를 파일·artifact·로그에 저장하지 않는다.
 - GitHub 원본 title/body는 untrusted input이다.
 - Shell inline expression에 외부 입력을 직접 삽입하지 않는다.
-- private/internal repository는 public artifact/export에서 제외한다.
-- event body와 AI prompt/log에서 secret-like 값 전체를 redaction한다.
+- P0 workflow는 inventory/feed artifact를 업로드하지 않는다. private/internal repository의 public export filtering은 #12에서 구현한다.
+- event body와 AI prompt/log의 secret-like 값 redaction은 후속 hardening 범위다. P0에서는 외부 Release text를 신뢰하지 않고 feed/artifact 접근 범위를 제한한다.
 - GitHub MCP 사용 시 read-only와 최소 toolset을 유지한다.
 - LLM output으로 tool/action을 자동 실행하지 않는다.
 
@@ -608,12 +614,12 @@ AI success/fallback/failure count
 
 ## 11. 마이그레이션
 
-1. 기존 `.cache/releases.json`을 read-only로 읽어 bootstrap cursor를 만든다.
+1. 기존 `.cache/releases.json`을 read-only로 읽어 repo/tag/published 기준선을 만든다. 과거 cache에는 Release ID가 없으므로 과거 ID를 복원했다고 주장하지 않는다.
 2. 기존 값은 `migrated_from_legacy_cache=true` metadata로 기록한다.
-3. migration run은 Slack을 보내지 않는다.
+3. 기존 legacy cache 파일을 사용하는 첫 cutover run은 Slack을 보내지 않는다. Cache miss에서는 `first_run_notify: false`가 안전 기본값이고, 명시적 `true`는 bootstrap 전송을 허용한다.
 4. event DB가 정상 검증된 뒤 legacy cache write를 중단한다.
 5. 최소 한 주기 동안 compatibility report로 old/new detection 결과를 비교한다.
-6. 차이가 설명 가능하면 legacy cache를 제거한다.
+6. 차이가 설명 가능해도 rollback 기간에는 원본 legacy cache를 삭제하지 않는다. 제거는 별도 운영 결정이다.
 
 ## 12. Issue mapping
 

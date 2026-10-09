@@ -9,7 +9,7 @@
 | 계층 | 맡는 일 | 금지할 일 |
 | --- | --- | --- |
 | GitHub MCP / `gh` / PyGithub | starred repo, release, workflow context 조회 | 캐시 변경, Slack 전송 결정 |
-| `.github/scripts/check_release.py` | 캐시 비교, 중복 방지, 정책 판단, Slack payload, feed 생성 | 자연어 요약 품질에 집착하기 |
+| `.github/scripts/check_release.py` + `starwatch/` | SQLite event/outbox, 중복 방지, 정책 판단, Slack payload·응답, feed 생성 | 자연어 요약 품질에 집착하기 |
 | 로컬 LLM | release feed 요약, 카테고리 분류, 중요도 초안, 메시지 문장 다듬기 | 새 릴리스 판정, 알림 임계값 override, 상태 파일 수정 |
 
 ## 현재 구현된 연결 지점
@@ -22,13 +22,14 @@
 
 feed에는 다음 계약이 들어간다.
 
-- `releases[]`: 새 릴리스로 판정된 목록
+- `releases[]`: 이번 실행에서 새 ID로 수집한 릴리스 목록 (미전달 누적 전체는 `pending_count`로 표시)
 - `notify`, `notify_reason`: Python 정책 엔진의 알림 판단
 - `policy`: `config.yaml`에서 읽은 알림 정책
-- `llm_contract`: 로컬 LLM이 해도 되는 일과 하면 안 되는 일
-- `mcp_contract`: GitHub MCP를 붙일 때의 읽기 전용 경계
+- `mode`, `pending_before_delivery_count`, `pending_count`, `delivery_succeeded`: 실행 모드, 전송 전/후 미전달 수, 전달 결과. `pending_count`는 지연 재시도 중인 event를 포함한 전송 후 수다.
+- `llm_contract`: 로컬 LLM의 허용 작업과 변경하면 안 되는 상태·전달 경계
+- `mcp_contract`: GitHub MCP의 선택적 읽기 전용 수집 경계
 
-GitHub Actions에서는 이 feed를 `release-feed` artifact로 업로드한다. 별도로 전체 starred repository metadata는 `.cache/stars-inventory.json`에 정규화하고 `starred-inventory` artifact로 보관한다. 이 inventory는 LLM/분석 계층의 분류 입력이며 release cache/알림 판정에는 관여하지 않는다.
+P0 GitHub Actions는 잠재적으로 private starred repository metadata가 포함되는 feed/inventory를 artifact로 업로드하지 않는다. `.cache/release-feed.json`과 `.cache/stars-inventory.json`은 로컬 실행 산출물이다. public/private 분류가 강제되기 전에는 신뢰할 수 있는 소비자에게만 전달한다(#12 후속).
 
 ## 로컬 LLM에 넘길 프롬프트 예시
 
@@ -69,14 +70,14 @@ docker run -i --rm \
 
 1. MCP의 `list_starred_repositories` 같은 읽기 도구로 starred repo 후보를 가져온다.
 2. 결과를 `repos.txt`와 `.cache/stars-inventory.json` 같은 deterministic collector output으로 저장한다.
-3. `check_release.py`가 release 조회/캐시 비교/알림 판단을 수행한다.
+3. `check_release.py`와 `starwatch/`가 모든 Release를 수집하고 event DB/outbox에서 중복·알림·전달 상태를 판단한다.
 4. `.cache/release-feed.json`을 로컬 LLM에 넘겨 요약을 만든다.
 
 ## 고도화 포인트
 
-- GitHub Actions 운영 경로는 계속 `gh api` + PyGithub로 단순하게 유지한다.
+- GitHub Actions 운영 경로는 `gh api` + PyGithub Release 목록 수집을 유지한다.
 - 로컬 실험 경로는 MCP/로컬 LLM을 붙여도 된다.
-- 나중에 애플리케이션으로 키울 때는 `.cache/release-feed.json`을 SQLite/PostgreSQL event table로 적재하면 된다.
+- P0의 event/outbox는 SQLite에 저장한다. 다른 애플리케이션과 공유하거나 영구 내구성이 필요할 때 별도 저장소·복제 방식을 검토한다.
 - LLM 결과는 `llm_summary` 같은 별도 필드/테이블에 저장하고, release event 원본과 분리한다.
 
 ## 참고 링크
