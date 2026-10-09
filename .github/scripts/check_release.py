@@ -22,12 +22,20 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+# Direct script invocation puts .github/scripts, not the repository, on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from starwatch.notifier import WebhookTransport
+from starwatch.pipeline import run_pipeline
+from starwatch.release_collector import FixtureReleaseSource, LiveReleaseSource
+
 CACHE_PATH = Path(".cache/releases.json")
+STATE_DB_PATH = Path(".cache/events.sqlite3")
 LAST_NOTIFICATION_PATH = Path(".cache/last_notification.txt")
 REPOS_FILE = Path("repos.txt")
 CONFIG_PATH = Path("config.yaml")
@@ -39,7 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "notification": {
         "min_release_count": 5,
         "special_project_always_notify": True,
-        "first_run_notify": True,
+        "first_run_notify": False,
         "max_slack_text_length": MAX_TEXT_LENGTH,
     },
     "feed": {
@@ -617,6 +625,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Detect new releases from GitHub starred repositories.")
     parser.add_argument("--repos-file", type=Path, default=REPOS_FILE)
     parser.add_argument("--cache-path", type=Path, default=CACHE_PATH)
+    parser.add_argument("--state-db", type=Path, default=STATE_DB_PATH)
+    parser.add_argument("--mode", choices=("preview", "commit"), default="preview")
+    parser.add_argument("--send-slack", action="store_true", help="Commit mode only; requires SLACK_WEBHOOK_URL")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--feed-path", type=Path, default=None)
     parser.add_argument("--github-output", type=Path, default=None)
@@ -626,55 +637,137 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(args: argparse.Namespace) -> int:
+def _assert_safe_outputs(paths: list[Path], protected: list[Path]) -> None:
+    resolved_protected = {path.resolve() for path in protected}
+    for path in paths:
+        if path.resolve() in resolved_protected:
+            raise ValueError("output path aliases protected state")
+        if path.exists():
+            for state in protected:
+                if state.exists() and os.path.samefile(path, state):
+                    raise ValueError("output path aliases protected state")
+
+
+def run(args: argparse.Namespace, transport: Any = None) -> int:
     config = load_config(args.config)
     feed_path = args.feed_path or Path(config["feed"]["output_path"])
     github_output_env = os.environ.get("GITHUB_OUTPUT")
     output_path = args.github_output or (Path(github_output_env) if github_output_env else None)
-
+    state_path = getattr(args, "state_db", STATE_DB_PATH)
+    mode = getattr(args, "mode", "preview")
+    send_slack = getattr(args, "send_slack", False)
+    protected = [state_path, args.cache_path, args.cache_path.parent / LAST_NOTIFICATION_PATH.name]
+    _assert_safe_outputs([p for p in (feed_path, output_path) if p is not None], protected)
+    if send_slack and mode != "commit":
+        raise ValueError("--send-slack requires --mode commit")
+    if send_slack and args.fixture_releases and transport is None:
+        raise ValueError("fixture runs require an injected fake Slack transport")
     repos = read_repos(args.repos_file)
-    previous_cache = load_cache(args.cache_path)
-    first_run = not args.cache_path.exists()
-    special_projects = set(config["special_projects"])
-
     if args.fixture_releases:
-        fetch_release = load_fixture_fetcher(args.fixture_releases)
+        source = FixtureReleaseSource(args.fixture_releases)
     else:
         token = os.getenv("GH_TOKEN")
         if not token:
             print("GH_TOKEN env required for live GitHub API calls", file=sys.stderr)
             return 1
-        fetch_release = get_github_release_fetcher(token)
-
-    result = detect_releases(
+        source = LiveReleaseSource(token)
+    if send_slack and transport is None:
+        webhook = os.getenv("SLACK_WEBHOOK_URL")
+        if not webhook:
+            raise ValueError("SLACK_WEBHOOK_URL is required for --send-slack")
+        transport = WebhookTransport(webhook)
+    result = run_pipeline(
+        state_path=state_path,
+        legacy_path=args.cache_path,
         repos=repos,
-        fetch_release=fetch_release,
-        previous_cache=previous_cache,
-        special_projects=special_projects,
-        first_run=first_run,
-        sleep_seconds=0 if args.no_sleep else args.sleep_seconds,
+        source=source,
+        config=config,
+        mode=mode,
+        send_slack=send_slack,
+        transport=transport,
     )
-    decision = decide_notification(result.releases, result.first_run, config)
-    payloads = build_slack_payloads(result.releases, result.first_run, config, decision)
-    feed = build_release_feed(result, decision, payloads, config, args.repos_file, args.cache_path)
-
-    save_cache(result.current_cache, args.cache_path)
+    releases = [
+        {
+            "repo": event["repository"],
+            "tag": event["tag_name"],
+            "name": event["release_name"],
+            "published": event["published_at"],
+            "html_url": event["html_url"],
+            "is_special": event["is_special"],
+            "event_id": event["event_id"],
+            "release_id": event["release_id"],
+            "prerelease": event["prerelease"],
+        }
+        for event in result.new_events
+    ]
+    payloads = [chunk.payload for chunk in result.chunks]
+    collector_errors_by_type = dict(sorted(Counter(
+        f"http_{error.status}" if isinstance(error.status, int) else "collection_error"
+        for error in result.collected.errors
+    ).items()))
+    feed = {
+        "schema_version": "github-stars-release-feed/v1",
+        "generated_at": utc_now(),
+        "source": {
+            "collector": "github-releases",
+            "detector": ".github/scripts/check_release.py",
+            "repos_file": str(args.repos_file),
+            "cache_path": str(args.cache_path),
+            "state_db": str(state_path),
+        },
+        "mode": mode,
+        "first_run": result.first_run,
+        "scanned_repos": result.collected.repositories_scanned,
+        "repos_with_release": result.collected.repositories_with_release,
+        "collection_error_count": len(result.collected.errors),
+        "collector_errors_by_type": collector_errors_by_type,
+        "release_count": len(releases),
+        "special_release_count": sum(1 for item in releases if item["is_special"]),
+        "pending_count": result.pending_after_delivery_count,
+        "pending_before_delivery_count": result.pending_before_delivery_count,
+        "notify": result.decision.should_notify,
+        "notify_reason": result.decision.reason,
+        "delivery_succeeded": result.delivery_succeeded,
+        "policy": config["notification"],
+        "releases": releases,
+        "slack_payload_count": len(payloads),
+        "llm_contract": {
+            "enabled": config["llm"]["enabled"],
+            "provider": config["llm"]["provider"],
+            "allowed_roles": [
+                "summarize_release_notes",
+                "categorize_projects",
+                "score_human_attention_priority",
+                "draft_human_readable_digest",
+            ],
+            "must_not_do": [
+                "decide_new_vs_duplicate",
+                "mutate_cache_or_state",
+                "send_notifications",
+                "override_notification_policy",
+            ],
+            "input_guidance": "Use releases[] as the deterministic source. Treat summaries as advisory text only.",
+        },
+        "mcp_contract": {
+            "role": "optional_read_only_collection_surface",
+            "recommended_toolsets": ["stargazers", "repos", "actions"],
+            "boundary": "GitHub MCP may collect GitHub context; this script remains the state and notification source of truth.",
+        },
+    }
     write_json_file(feed_path, feed)
-    if decision.should_notify:
-        save_last_notification_time(result.releases, args.cache_path.parent / LAST_NOTIFICATION_PATH.name)
-
     if output_path is not None:
         write_github_outputs(
             output_path=output_path,
-            decision=decision,
+            decision=NotificationDecision(result.decision.should_notify, result.decision.reason),
             payloads=payloads,
             feed_path=feed_path,
-            release_count=len(result.releases),
+            release_count=len(releases),
             special_release_count=feed["special_release_count"],
         )
-
-    print_summary(result, decision, feed_path)
-    return 0
+    print(f"Scanned repos: {result.collected.repositories_scanned}; new releases: {len(releases)}; "
+          f"pending: {len(result.pending)}; collection errors: {collector_errors_by_type}; "
+          f"notify reason: {result.decision.reason}; mode: {mode}")
+    return 1 if result.delivery_succeeded is False or result.collected.errors else 0
 
 
 def main() -> None:
@@ -683,7 +776,8 @@ def main() -> None:
     try:
         raise SystemExit(run(args))
     except Exception as exc:  # pragma: no cover - last-resort CLI guard
-        print("ERROR:", exc, file=sys.stderr)
+        # Exception text from APIs and transports can embed credentials/URLs.
+        print(f"ERROR: {type(exc).__name__}; no state was silently reset", file=sys.stderr)
         raise SystemExit(1) from exc
 
 

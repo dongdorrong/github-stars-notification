@@ -66,15 +66,15 @@ class CheckReleaseTest(unittest.TestCase):
         )
         self.assertEqual(second.releases, [])
 
-    def test_legacy_first_run_default_notifies_when_threshold_reached(self) -> None:
-        """Characterize old bootstrap default; P0 deliberately makes it fail-safe."""
+    def test_first_run_default_is_fail_safe(self) -> None:
+        """The characterization commit captured the old notify-on-bootstrap default."""
         config = check_release.normalize_config({})
         releases = [
             check_release.Release(f"owner/repo{i}", "v1", "", "2026-06-20", "")
             for i in range(5)
         ]
-        self.assertTrue(config["notification"]["first_run_notify"])
-        self.assertTrue(check_release.decide_notification(releases, True, config).should_notify)
+        self.assertFalse(config["notification"]["first_run_notify"])
+        self.assertFalse(check_release.decide_notification(releases, True, config).should_notify)
 
     def test_policy_notifies_special_project_below_threshold(self) -> None:
         config = check_release.normalize_config(
@@ -166,6 +166,63 @@ feed:
             self.assertIn("has_new=true", output)
             self.assertIn("notify_reason=special_project_release", output)
             self.assertIn(f"feed_path={feed_path}", output)
+
+    def test_fixture_errors_are_reported_by_safe_type_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            repos = tmp / "repos.txt"
+            repos.write_text("bad/missing\nbad/server\nowner/good\n", encoding="utf-8")
+            fixture = tmp / "fixture.json"
+            fixture.write_text(json.dumps({
+                "bad/missing": {"error": {"status": 404, "message": "private-token-marker"}},
+                "bad/server": {"error": {"status": 500, "message": "private-token-marker"}},
+                "owner/good": {"id": 1, "tag_name": "v1", "published_at": "2026-10-02T00:00:00Z"},
+            }), encoding="utf-8")
+            feed = tmp / "feed.json"
+            code = check_release.run(Namespace(
+                repos_file=repos, fixture_releases=fixture, state_db=tmp / "state.sqlite3",
+                cache_path=tmp / "legacy.json", config=tmp / "missing-config.yaml",
+                feed_path=feed, github_output=None, mode="preview", send_slack=False,
+                no_sleep=True, sleep_seconds=0,
+            ))
+            self.assertEqual(code, 1)
+            output = feed.read_text(encoding="utf-8")
+            self.assertNotIn("private-token-marker", output)
+            parsed = json.loads(output)
+            self.assertEqual(parsed["collector_errors_by_type"], {"http_404": 1, "http_500": 1})
+            self.assertEqual(parsed["release_count"], 1)
+
+    def test_feed_pending_count_reflects_post_delivery_state(self) -> None:
+        class FakeTransport:
+            def __init__(self, status):
+                self.status = status
+
+            def send(self, payload):
+                from starwatch.notifier import SlackResult
+                return SlackResult(self.status)
+
+        for status, expected in ((200, 0), (500, 1)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp_dir:
+                tmp = Path(tmp_dir)
+                repos = tmp / "repos.txt"
+                repos.write_text("owner/repo\n", encoding="utf-8")
+                fixture = tmp / "fixture.json"
+                fixture.write_text(json.dumps({"owner/repo": {
+                    "id": 1, "tag_name": "v1", "published_at": "2026-10-02T00:00:00Z"
+                }}), encoding="utf-8")
+                config = tmp / "config.yaml"
+                config.write_text("notification:\n  min_release_count: 1\n  first_run_notify: true\n")
+                feed = tmp / "feed.json"
+                code = check_release.run(Namespace(
+                    repos_file=repos, fixture_releases=fixture, state_db=tmp / "state.sqlite3",
+                    cache_path=tmp / "legacy.json", config=config, feed_path=feed,
+                    github_output=None, mode="commit", send_slack=True,
+                    no_sleep=True, sleep_seconds=0,
+                ), transport=FakeTransport(status))
+                self.assertEqual(code, 0 if status == 200 else 1)
+                parsed = json.loads(feed.read_text(encoding="utf-8"))
+                self.assertEqual(parsed["pending_before_delivery_count"], 1)
+                self.assertEqual(parsed["pending_count"], expected)
 
 
 if __name__ == "__main__":

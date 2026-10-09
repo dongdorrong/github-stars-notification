@@ -12,12 +12,15 @@ special_projects:
   - "istio / istio"
 
 notification:
+  # P0 고정 정책: Release 목록의 draft/prerelease metadata를 모두 수집한다.
+  # draft는 게시 전 알림하지 않고, prerelease는 일반 Release와 같은 임계값 정책을 적용한다.
+  # 별도 draft/prerelease 설정 옵션은 아직 없다.
   # 기본은 릴리스가 5개 이상 모였을 때 Slack으로 보낸다.
   min_release_count: 5
   # 관심 프로젝트 릴리스는 5개 미만이어도 바로 보낸다.
   special_project_always_notify: true
   # 캐시가 없는 첫 실행에서 현재 릴리스 목록을 bootstrap 알림으로 보낼지 여부.
-  first_run_notify: true
+  first_run_notify: false
   # Slack text 제한(40,000자)보다 여유 있게 분할한다.
   max_slack_text_length: 35000
 
