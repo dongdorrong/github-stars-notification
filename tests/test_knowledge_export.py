@@ -33,6 +33,7 @@ class GithubStarsKnowledgeExportTests(unittest.TestCase):
                                 "name": "Release v0.2.0",
                                 "published": "2026-06-20 12:00:00",
                                 "html_url": "https://github.com/ray-project/llmperf/releases/tag/v0.2.0",
+                                "visibility": "public",
                                 "is_special": True,
                             }
                         ],
