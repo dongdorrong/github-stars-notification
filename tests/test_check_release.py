@@ -52,6 +52,30 @@ class CheckReleaseTest(unittest.TestCase):
         )
         self.assertEqual(second.releases, [])
 
+    def test_legacy_below_threshold_event_is_cached_before_delivery(self) -> None:
+        """Characterize the loss mode fixed by the durable outbox."""
+        config = check_release.normalize_config({"notification": {"min_release_count": 5}})
+        raw = {"tag_name": "v1", "published_at": "2026-06-20 10:00:00"}
+        first = check_release.detect_releases(
+            ["owner/repo"], lambda _: raw, {}, set(), True, 0
+        )
+        self.assertFalse(check_release.decide_notification(first.releases, True, config).should_notify)
+        self.assertEqual(first.current_cache["owner/repo"]["tag"], "v1")
+        second = check_release.detect_releases(
+            ["owner/repo"], lambda _: raw, first.current_cache, set(), False, 0
+        )
+        self.assertEqual(second.releases, [])
+
+    def test_legacy_first_run_default_notifies_when_threshold_reached(self) -> None:
+        """Characterize old bootstrap default; P0 deliberately makes it fail-safe."""
+        config = check_release.normalize_config({})
+        releases = [
+            check_release.Release(f"owner/repo{i}", "v1", "", "2026-06-20", "")
+            for i in range(5)
+        ]
+        self.assertTrue(config["notification"]["first_run_notify"])
+        self.assertTrue(check_release.decide_notification(releases, True, config).should_notify)
+
     def test_policy_notifies_special_project_below_threshold(self) -> None:
         config = check_release.normalize_config(
             {
